@@ -1,0 +1,29 @@
+cat > .gitignore << 'EOF'
+# Virtual environment
+arbitrage_env/
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Secrets
+kalshi-private-key.pem
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+EOF
