@@ -16,7 +16,7 @@ try:
     from ibapi.wrapper import EWrapper
     from ibapi.contract import Contract
     from ibapi.order import Order
-    from ibapi.common import TickerId, OrderId
+    # Removed problematic type imports: TickerId, OrderId
     import ibapi.decoder
 except ImportError:
     print("⚠️ IBKR API not installed. Run: pip install ibapi")
@@ -88,13 +88,13 @@ class TWSEventClient(EWrapper, EClient):
             self.connected = False
             print("🔌 Disconnected from TWS")
     
-    def nextValidId(self, orderId: OrderId):
+    def nextValidId(self, orderId):
         """Receive next valid order ID"""
         super().nextValidId(orderId)
         self.next_req_id = orderId
         print(f"🔍 Next valid order ID: {orderId}")
     
-    def error(self, reqId: TickerId, errorCode: int, errorString: str):
+    def error(self, reqId, errorCode: int, errorString: str):
         """Handle API errors"""
         if errorCode == 2104:  # Market data farm connection OK
             print("✅ Market data connection established")
@@ -176,7 +176,7 @@ class TWSEventClient(EWrapper, EClient):
         
         print(f"📊 Found contract: {contract.symbol} - {contractDetails.longName}")
     
-    def request_market_data(self, contract: Contract) -> int:
+    def request_market_data(self, contract) -> int:
         """Request real-time market data for a contract"""
         req_id = self.get_next_req_id()
         
@@ -191,7 +191,7 @@ class TWSEventClient(EWrapper, EClient):
         
         return req_id
     
-    def tickPrice(self, reqId: TickerId, tickType, price: float, attrib):
+    def tickPrice(self, reqId, tickType, price: float, attrib):
         """Receive real-time price updates"""
         # Map tick types to readable names
         tick_types = {
@@ -206,7 +206,7 @@ class TWSEventClient(EWrapper, EClient):
             
             print(f"💰 {reqId}: {tick_name} = ${price:.3f}")
     
-    def tickSize(self, reqId: TickerId, tickType, size: int):
+    def tickSize(self, reqId, tickType, size: int):
         """Receive real-time size updates"""
         size_types = {
             0: "bid_size", 3: "ask_size", 5: "last_size", 8: "volume"
@@ -218,7 +218,7 @@ class TWSEventClient(EWrapper, EClient):
                 self.market_data[reqId] = {}
             self.market_data[reqId][size_name] = size
     
-    def updateMktDepth(self, reqId: TickerId, position: int, operation: int, 
+    def updateMktDepth(self, reqId, position: int, operation: int, 
                       side: int, price: float, size: int):
         """Receive order book depth updates"""
         if reqId not in self.order_books:
@@ -236,7 +236,7 @@ class TWSEventClient(EWrapper, EClient):
             if position in self.order_books[reqId][book_side]:
                 del self.order_books[reqId][book_side][position]
     
-    def get_market_data(self) -> List[MarketData]:
+    def get_market_data(self) -> List['MarketData']:
         """
         Get current market data for all active event contracts
         Returns MarketData objects compatible with your existing system
@@ -269,7 +269,7 @@ class TWSEventClient(EWrapper, EClient):
         print(f"✅ Retrieved {len(market_data_list)} IBKR event contracts")
         return market_data_list
     
-    def _convert_to_market_data(self, contract: Contract, req_id: int) -> Optional[MarketData]:
+    def _convert_to_market_data(self, contract, req_id: int) -> Optional['MarketData']:
         """Convert TWS data to your MarketData format"""
         try:
             # Get price data
@@ -314,7 +314,7 @@ class TWSEventClient(EWrapper, EClient):
             print(f"⚠️ Error converting market data: {e}")
             return None
     
-    def place_event_order(self, contract: Contract, action: str, quantity: int, 
+    def place_event_order(self, contract, action: str, quantity: int, 
                          price: float = None, order_type: str = "LMT") -> int:
         """
         Place an order for event contract with proper event trading parameters

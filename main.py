@@ -266,7 +266,7 @@ class ArbitrageBot:
     def __init__(self):
         self.settings = Settings()
         self.kalshi_client = KalshiClient()
-        self.ibkr_client = IBKRClient()
+        from data_collectors.ibkr_client import TWSEventClient as IBKRClient
         self.arbitrage_detector = ArbitrageDetector()
         self.notifier = AlertNotifier()
         
