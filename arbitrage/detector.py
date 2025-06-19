@@ -4,6 +4,7 @@ Arbitrage Detector - Fixed Import Issues
 """
 
 import math
+import os
 from typing import Dict, Optional
 from config.settings import Settings
 
@@ -52,12 +53,30 @@ except ImportError:
 
 class ArbitrageDetector:
     """
-    Core arbitrage detection logic with real fee calculations
+    Core arbitrage detection logic with real fee calculations and safety circuit breakers
     """
     
     def __init__(self):
         self.settings = Settings()
+        
+        # Safety tracking for testing
+        self.daily_trades = 0
+        self.daily_profit_loss = 0.0
+        self.trade_history = []
+        self.emergency_halt = False
+        
         print("🔄 ArbitrageDetector initialized")
+        
+        # Load testing settings if enabled
+        if os.getenv('TESTING_MODE', 'false').lower() == 'true':
+            self.max_daily_trades = int(os.getenv('DAILY_TRADE_LIMIT', '5'))
+            self.max_daily_loss = float(os.getenv('MAX_DAILY_LOSS', '50'))
+            self.max_slippage_deviation = float(os.getenv('MAX_SLIPPAGE_DEVIATION', '0.02'))
+            print(f"🧪 Testing mode: {self.max_daily_trades} trades/day, ${self.max_daily_loss} max loss")
+        else:
+            self.max_daily_trades = 999
+            self.max_daily_loss = 1000
+            self.max_slippage_deviation = 0.1
     
     def calculate_total_fees(self, buy_platform: str, sell_platform: str, 
                            buy_price: float, sell_price: float, volume: int) -> float:
@@ -158,11 +177,26 @@ class ArbitrageDetector:
     def validate_arbitrage_opportunity(self, buy_platform, sell_platform, 
                                      volume: int) -> Optional[Dict]:
         """
-        Comprehensive validation of arbitrage opportunity with auto-execution logic
-        Returns detailed analysis or None if not profitable
+        Comprehensive validation with PRE-CALCULATED slippage and safety checks
+        SLIPPAGE MUST BE KNOWN AND INCLUDED BEFORE ALERT
         """
+        
+        # SAFETY CIRCUIT BREAKERS
+        if self.emergency_halt:
+            print("🛑 EMERGENCY HALT ACTIVE - No new trades")
+            return None
+            
+        if self.daily_trades >= self.max_daily_trades:
+            print(f"🛑 Daily trade limit reached ({self.daily_trades}/{self.max_daily_trades})")
+            return None
+            
+        if self.daily_profit_loss < -self.max_daily_loss:
+            print(f"🛑 Daily loss limit exceeded (${self.daily_profit_loss:.2f})")
+            self.emergency_halt = True
+            return None
+        
         try:
-            # Get best prices - WE BUY AT ASK, SELL AT BID
+            # CRITICAL: Get EXACT execution prices using REAL order book depth
             buy_price = buy_platform.ask_price  # We buy at ask price
             sell_price = sell_platform.bid_price  # We sell at bid price
             
@@ -170,11 +204,21 @@ class ArbitrageDetector:
             if buy_price >= sell_price:
                 return None
             
-            # Calculate REAL execution costs using order book depth
+            # CALCULATE REAL EXECUTION IMPACT using order book depth
+            # This is WHERE THE MAGIC HAPPENS - we KNOW slippage before trading
             buy_execution = buy_platform.order_book.calculate_market_impact('buy', volume)
             sell_execution = sell_platform.order_book.calculate_market_impact('sell', volume)
             
-            # Use actual execution prices (not just best prices)
+            # VERIFY we have sufficient liquidity 
+            if buy_execution.get('remaining_volume', 0) > 0:
+                print(f"⚠️ Insufficient buy liquidity: {buy_execution.get('remaining_volume')} contracts unfilled")
+                return None
+                
+            if sell_execution.get('remaining_volume', 0) > 0:
+                print(f"⚠️ Insufficient sell liquidity: {sell_execution.get('remaining_volume')} contracts unfilled")
+                return None
+            
+            # Use ACTUAL execution prices (includes slippage)
             actual_buy_price = buy_execution.get('average_price', buy_price)
             actual_sell_price = sell_execution.get('average_price', sell_price)
             
@@ -184,18 +228,27 @@ class ArbitrageDetector:
                 actual_buy_price, actual_sell_price, volume
             )
             
-            # Slippage is already calculated in market_impact
+            # Slippage is already included in execution prices
             buy_slippage = buy_execution.get('slippage', 0)
             sell_slippage = sell_execution.get('slippage', 0)
             total_slippage = buy_slippage + sell_slippage
             
+            # SAFETY CHECK: If slippage is way worse than expected, halt
+            expected_slippage = self.estimate_slippage(buy_platform, sell_platform, volume)
+            if total_slippage > (expected_slippage + self.max_slippage_deviation):
+                print(f"🛑 Excessive slippage detected: {total_slippage:.4f} vs expected {expected_slippage:.4f}")
+                self.emergency_halt = True
+                return None
+            
             # Net profit calculation with REAL execution prices
             gross_profit = (actual_sell_price - actual_buy_price) * volume
-            net_profit = gross_profit - fees - total_slippage
+            net_profit = gross_profit - fees
+            # Note: slippage already included in execution prices, so no double-counting
             
-            # HALT IF ANY LOSS - This should never happen with real arbitrage
+            # HALT IF ANY LOSS - This should NEVER happen with real arbitrage
             if net_profit <= 0:
                 print(f"⚠️ Rejecting trade - would lose ${-net_profit:.2f}")
+                print(f"   Buy: ${actual_buy_price:.3f}, Sell: ${actual_sell_price:.3f}, Fees: ${fees:.2f}")
                 return None
             
             profit_margin = (net_profit / (actual_buy_price * volume)) * 100
@@ -203,24 +256,38 @@ class ArbitrageDetector:
             # Calculate daily profit rate (assume 1 day to expiry for now)
             daily_profit_rate = profit_margin  # Will be enhanced with real expiry dates
             
-            # AUTO-EXECUTION LOGIC: 5% daily profit OR $250+ total profit
-            should_auto_execute = (daily_profit_rate >= 5.0) or (net_profit >= 250.0)
+            # AUTO-EXECUTION LOGIC: Based on testing/production settings
+            auto_threshold = float(os.getenv('AUTO_EXECUTE_PROFIT_THRESHOLD', '250'))
+            auto_rate = float(os.getenv('AUTO_EXECUTE_DAILY_RATE', '5.0'))
+            should_auto_execute = (daily_profit_rate >= auto_rate) or (net_profit >= auto_threshold)
             
-            return {
+            # Create detailed opportunity with PRE-CALCULATED everything
+            opportunity = {
                 'gross_profit': gross_profit,
                 'total_fees': fees,
-                'total_slippage': total_slippage,
-                'net_profit': net_profit,
+                'total_slippage': total_slippage,  # Already included in prices
+                'net_profit': net_profit,          # FINAL profit after ALL costs
                 'profit_margin_percent': profit_margin,
                 'daily_profit_rate': daily_profit_rate,
                 'volume': volume,
-                'buy_price': actual_buy_price,
-                'sell_price': actual_sell_price,
+                'buy_price': actual_buy_price,     # REAL execution price
+                'sell_price': actual_sell_price,   # REAL execution price
                 'should_auto_execute': should_auto_execute,
                 'buy_execution': buy_execution,
                 'sell_execution': sell_execution,
-                'execution_quality': min(buy_execution.get('filled_volume', 0), sell_execution.get('filled_volume', 0))
+                'execution_quality': min(buy_execution.get('filled_volume', 0), sell_execution.get('filled_volume', 0)),
+                'pre_calculated': True,  # Flag that all costs are included
+                'expected_slippage': expected_slippage,
+                'actual_slippage': total_slippage,
+                'slippage_accuracy': abs(total_slippage - expected_slippage)
             }
+            
+            print(f"✅ VALID ARBITRAGE FOUND:")
+            print(f"   Net profit: ${net_profit:.2f} ({profit_margin:.2f}%)")
+            print(f"   Slippage: ${total_slippage:.3f} (vs expected ${expected_slippage:.3f})")
+            print(f"   Auto-execute: {should_auto_execute}")
+            
+            return opportunity
             
         except Exception as e:
             print(f"⚠️ Error validating arbitrage: {e}")

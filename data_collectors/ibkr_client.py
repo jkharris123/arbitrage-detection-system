@@ -177,19 +177,94 @@ class TWSEventClient(EWrapper, EClient):
         print(f"📊 Found contract: {contract.symbol} - {contractDetails.longName}")
     
     def request_market_data(self, contract) -> int:
-        """Request real-time market data for a contract"""
+        """Request real-time market data AND order book depth for a contract"""
         req_id = self.get_next_req_id()
         
         print(f"📊 Requesting market data for {contract.symbol}")
         
-        # Request market data
+        # Request Level I market data (bid/ask/last)
         self.reqMktData(req_id, contract, "", False, False, [])
         
-        # Request market depth (order book)
+        # REQUEST MARKET DEPTH (ORDER BOOK) - CRITICAL FOR SLIPPAGE CALCULATION
         depth_req_id = self.get_next_req_id()
-        self.reqMktDepth(depth_req_id, contract, 10, False, [])
+        print(f"📊 Requesting Level II market depth for {contract.symbol}")
+        self.reqMktDepth(depth_req_id, contract, 10, False, [])  # 10 levels deep
+        
+        # Store mapping between req_ids
+        self.depth_req_mapping = getattr(self, 'depth_req_mapping', {})
+        self.depth_req_mapping[depth_req_id] = req_id
         
         return req_id
+    
+    def test_order_book_availability(self, symbol: str = "USELX24") -> bool:
+        """
+        CRITICAL TEST: Verify we can get order book depth from IBKR
+        This determines if the arbitrage system is viable
+        """
+        print(f"🧪 TESTING ORDER BOOK AVAILABILITY FOR: {symbol}")
+        print("=" * 60)
+        
+        try:
+            # Create test contract
+            contract = self.create_event_contract(symbol)
+            
+            # Request market data and depth
+            req_id = self.request_market_data(contract)
+            
+            print(f"✅ Market data requested (req_id: {req_id})")
+            print("⏳ Waiting for order book data...")
+            
+            # Wait for data
+            time.sleep(5)
+            
+            # Check if we received order book data
+            depth_data = self.order_books.get(req_id, {})
+            market_data = self.market_data.get(req_id, {})
+            
+            print(f"\n📊 RESULTS FOR {symbol}:")
+            print(f"Market data received: {bool(market_data)}")
+            print(f"Order book depth received: {bool(depth_data)}")
+            
+            if market_data:
+                print(f"   Bid: ${market_data.get('bid', 'N/A')}")
+                print(f"   Ask: ${market_data.get('ask', 'N/A')}")
+                print(f"   Bid Size: {market_data.get('bid_size', 'N/A')}")
+                print(f"   Ask Size: {market_data.get('ask_size', 'N/A')}")
+            
+            if depth_data:
+                bids = depth_data.get('bids', {})
+                asks = depth_data.get('asks', {})
+                print(f"   Order book levels - Bids: {len(bids)}, Asks: {len(asks)}")
+                
+                if bids:
+                    print("   📊 BID DEPTH:")
+                    for pos, data in sorted(bids.items())[:5]:
+                        print(f"      Level {pos}: ${data['price']:.3f} x {data['size']}")
+                
+                if asks:
+                    print("   📊 ASK DEPTH:")  
+                    for pos, data in sorted(asks.items())[:5]:
+                        print(f"      Level {pos}: ${data['price']:.3f} x {data['size']}")
+            
+            # Determine if we have enough data for arbitrage
+            has_required_data = (
+                bool(market_data) and 
+                bool(depth_data) and
+                len(depth_data.get('bids', {})) >= 2 and
+                len(depth_data.get('asks', {})) >= 2
+            )
+            
+            print(f"\n🎯 ARBITRAGE VIABILITY: {'✅ YES' if has_required_data else '❌ NO'}")
+            
+            if not has_required_data:
+                print("❌ CRITICAL: Insufficient order book data for accurate slippage calculation")
+                print("   This arbitrage system will NOT work without full order book depth")
+            
+            return has_required_data
+            
+        except Exception as e:
+            print(f"❌ Order book test failed: {e}")
+            return False
     
     def tickPrice(self, reqId, tickType, price: float, attrib):
         """Receive real-time price updates"""
