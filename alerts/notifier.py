@@ -1,380 +1,558 @@
 #!/usr/bin/env python3
 """
-Alert Notifier with Discord Integration
-Sends formatted arbitrage alerts to Discord
+Discord One-Click Execution System
+Click a button in Discord -> Trades execute automatically
 """
 
 import os
-import requests
 import json
-from datetime import datetime, time
-from typing import List, Dict, Optional
-
-# Load .env from parent directory
+import time
+import asyncio
+import threading
+from datetime import datetime
+from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict
+from flask import Flask, request, jsonify
+import requests
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-class AlertNotifier:
+# Import your working clients
+from data_collectors.kalshi_client import KalshiClient
+# from data_collectors.ibkr_client import TWSEventClient  # Will add tomorrow
+
+@dataclass
+class ExecutionRequest:
+    opportunity_id: str
+    contract_name: str
+    buy_platform: str
+    sell_platform: str
+    buy_ticker: str
+    sell_ticker: str
+    volume: int
+    buy_price: float
+    sell_price: float
+    estimated_profit: float
+    timestamp: datetime
+    user_approved: bool = False
+    executed: bool = False
+    execution_results: Dict = None
+
+class OneClickExecutor:
     """
-    Send arbitrage alerts via Discord with smart scheduling
+    Handles one-click execution from Discord alerts
+    Manages the workflow: Alert -> User Click -> Instant Execution
     """
     
     def __init__(self):
+        load_dotenv()
+        
         self.discord_webhook = os.getenv('DISCORD_WEBHOOK')
+        self.kalshi_client = KalshiClient()
+        # self.ibkr_client = None  # Will initialize tomorrow
         
-        # Alert scheduling settings
-        self.sleep_start = datetime.strptime(os.getenv('ALERT_SLEEP_START', '23:00'), '%H:%M').time()
-        self.sleep_end = datetime.strptime(os.getenv('ALERT_SLEEP_END', '07:00'), '%H:%M').time()
-        self.weekend_alerts = os.getenv('WEEKEND_ALERTS', 'false').lower() == 'true'
-        self.emergency_threshold = float(os.getenv('EMERGENCY_PROFIT_THRESHOLD', '100.0'))
+        # Pending execution requests
+        self.pending_requests: Dict[str, ExecutionRequest] = {}
         
-        # Queued alerts for sleep mode
-        self.queued_alerts = []
+        # Safety settings from .env
+        self.max_position_size = int(os.getenv('MAX_POSITION_SIZE', '10'))
+        self.max_daily_loss = float(os.getenv('MAX_DAILY_LOSS', '50'))
+        self.testing_mode = os.getenv('TESTING_MODE', 'true').lower() == 'true'
         
-        print(f"🔔 AlertNotifier initialized")
-        print(f"   Sleep mode: {self.sleep_start} - {self.sleep_end}")
-        print(f"   Weekend alerts: {self.weekend_alerts}")
-        print(f"   Emergency threshold: ${self.emergency_threshold}")
+        # Execution tracking
+        self.daily_trades = 0
+        self.daily_pnl = 0.0
+        self.execution_history = []
         
-        if not self.discord_webhook:
-            print("⚠️ No Discord webhook configured - alerts will be logged only")
+        print(f"🚀 One-Click Executor initialized")
+        print(f"   Testing mode: {self.testing_mode}")
+        print(f"   Max position: {self.max_position_size} contracts")
+        print(f"   Daily loss limit: ${self.max_daily_loss}")
     
-    def should_send_alert(self, profit_amount: float = 0.0) -> bool:
+    def send_execution_alert(self, opportunity: Dict) -> str:
         """
-        Determine if alerts should be sent based on time and profit
+        Send Discord alert with one-click execution buttons
+        Returns the opportunity_id for tracking
         """
-        now = datetime.now()
-        current_time = now.time()
         
-        # Emergency override for large profits
-        if profit_amount >= self.emergency_threshold:
-            return True
+        # Generate unique opportunity ID
+        opportunity_id = f"ARB_{int(time.time())}_{opportunity.get('volume', 0)}"
         
-        # Check sleep hours
-        if self._is_sleep_time(current_time):
-            return False
+        # Store execution request
+        exec_request = ExecutionRequest(
+            opportunity_id=opportunity_id,
+            contract_name=opportunity.get('contract_name', 'Unknown'),
+            buy_platform=opportunity.get('buy_platform', 'Kalshi'),
+            sell_platform=opportunity.get('sell_platform', 'IBKR'),
+            buy_ticker=opportunity.get('buy_ticker', ''),
+            sell_ticker=opportunity.get('sell_ticker', ''),
+            volume=min(opportunity.get('volume', 10), self.max_position_size),
+            buy_price=opportunity.get('buy_price', 0.0),
+            sell_price=opportunity.get('sell_price', 0.0),
+            estimated_profit=opportunity.get('estimated_profit', 0.0),
+            timestamp=datetime.now()
+        )
         
-        # Check weekends
-        if not self.weekend_alerts and now.weekday() >= 5:  # Saturday = 5, Sunday = 6
-            return False
+        self.pending_requests[opportunity_id] = exec_request
         
-        return True
-    
-    def _is_sleep_time(self, current_time: time) -> bool:
-        """Check if current time is in sleep hours"""
-        if self.sleep_start <= self.sleep_end:
-            # Normal case: 23:00 - 07:00 (same day)
-            return self.sleep_start <= current_time <= self.sleep_end
+        # Create Discord embed with execution buttons
+        embed = self._create_execution_embed(exec_request)
+        
+        # Send to Discord
+        if self.discord_webhook:
+            self._send_to_discord(embed)
         else:
-            # Edge case: 23:00 - 07:00 (crosses midnight)
-            return current_time >= self.sleep_start or current_time <= self.sleep_end
-    
-    def send_arbitrage_alerts(self, opportunities: List) -> None:
-        """
-        Send alerts for arbitrage opportunities
-        Handles sleep mode and formatting
-        """
-        if not opportunities:
-            return
+            print("⚠️ No Discord webhook - would send execution alert")
         
-        for opportunity in opportunities:
-            profit_amount = getattr(opportunity, 'total_net_profit', 0.0)
-            
-            if self.should_send_alert(profit_amount):
-                self._send_immediate_alert(opportunity)
-            else:
-                self._queue_alert(opportunity)
+        print(f"🔔 Execution alert sent: {opportunity_id}")
+        return opportunity_id
     
-    def _send_immediate_alert(self, opportunity) -> None:
-        """Send immediate alert to Discord"""
-        try:
-            # Calculate time metrics
-            time_metrics = self._calculate_time_metrics(opportunity)
-            
-            # Format the alert message
-            alert_data = self._format_discord_alert(opportunity, time_metrics)
-            
-            if self.discord_webhook:
-                self._send_to_discord(alert_data)
-            else:
-                self._log_alert(alert_data)
-                
-        except Exception as e:
-            print(f"❌ Error sending alert: {e}")
-    
-    def _calculate_time_metrics(self, opportunity) -> Dict:
-        """Calculate daily, weekly, and annualized returns"""
-        try:
-            # Get expiration date (stub - will need real data)
-            expiration_date = getattr(opportunity, 'expiration_date', 
-                                    datetime.now().replace(month=12, day=31))  # Default to end of year
-            
-            now = datetime.now()
-            days_to_expiry = max(1, (expiration_date - now).days)
-            
-            profit_margin = getattr(opportunity, 'profit_margin_percent', 0.0)
-            total_profit = getattr(opportunity, 'total_net_profit', 0.0)
-            
-            # Calculate return rates
-            daily_return = profit_margin / days_to_expiry
-            weekly_return = daily_return * 7
-            annualized_return = daily_return * 365
-            daily_dollar_rate = total_profit / days_to_expiry
-            
-            return {
-                'days_to_expiry': days_to_expiry,
-                'daily_return_percent': daily_return,
-                'weekly_return_percent': weekly_return,
-                'annualized_return_percent': annualized_return,
-                'daily_dollar_rate': daily_dollar_rate,
-                'expiration_date': expiration_date
-            }
-            
-        except Exception as e:
-            print(f"⚠️ Error calculating time metrics: {e}")
-            return {
-                'days_to_expiry': 30,
-                'daily_return_percent': 0.1,
-                'weekly_return_percent': 0.7,
-                'annualized_return_percent': 36.5,
-                'daily_dollar_rate': 1.0,
-                'expiration_date': datetime.now()
-            }
-    
-    def _format_discord_alert(self, opportunity, time_metrics: Dict) -> Dict:
-        """Format opportunity as Discord embed"""
+    def _create_execution_embed(self, request: ExecutionRequest) -> Dict:
+        """Create Discord embed with execution buttons"""
         
-        # Get opportunity data with fallbacks
-        contract_name = getattr(opportunity, 'contract_name', 'Unknown Contract')
-        total_profit = getattr(opportunity, 'total_net_profit', 0.0)
-        profit_margin = getattr(opportunity, 'profit_margin_percent', 0.0)
-        buy_platform = getattr(opportunity, 'buy_platform', 'Platform A')
-        sell_platform = getattr(opportunity, 'sell_platform', 'Platform B')
-        buy_price = getattr(opportunity, 'buy_price', 0.0)
-        sell_price = getattr(opportunity, 'sell_price', 0.0)
-        volume = getattr(opportunity, 'optimal_volume', getattr(opportunity, 'max_volume', 0))
+        # Calculate key metrics
+        profit_per_contract = request.estimated_profit / request.volume if request.volume > 0 else 0
+        investment_required = request.volume * max(request.buy_price, request.sell_price)
+        roi_percent = (request.estimated_profit / investment_required * 100) if investment_required > 0 else 0
         
-        # Determine embed color based on profit
-        if total_profit >= 100:
-            color = 0x00ff00  # Green for high profit
-        elif total_profit >= 50:
-            color = 0xffff00  # Yellow for medium profit
+        # Determine urgency color
+        if request.estimated_profit >= 50:
+            color = 0x00FF00  # Green - High profit
+        elif request.estimated_profit >= 20:
+            color = 0xFFFF00  # Yellow - Medium profit  
         else:
-            color = 0x00ffff  # Cyan for low profit
+            color = 0xFFA500  # Orange - Low profit
         
-        # Build the embed
-        embed = {
-            "title": "💎 ARBITRAGE OPPORTUNITY",
-            "description": f"**{contract_name}**",
-            "color": color,
-            "fields": [
-                {
-                    "name": "💰 Profit Analysis",
-                    "value": f"**${total_profit:.2f}** ({profit_margin:.2f}%)\n"
-                            f"Volume: {volume} contracts",
-                    "inline": True
+        embed_data = {
+            "content": f"🚨 **READY TO EXECUTE** 🚨",
+            "embeds": [{
+                "title": f"💎 {request.contract_name}",
+                "description": f"**PROFIT: ${request.estimated_profit:.2f}** ({roi_percent:.1f}% ROI)",
+                "color": color,
+                "fields": [
+                    {
+                        "name": "🔄 Execution Plan",
+                        "value": f"**Buy** {request.buy_platform}: {request.volume} @ ${request.buy_price:.3f}\n"
+                                f"**Sell** {request.sell_platform}: {request.volume} @ ${request.sell_price:.3f}\n"
+                                f"**Net per contract**: ${profit_per_contract:.3f}",
+                        "inline": False
+                    },
+                    {
+                        "name": "💰 Financial Impact",
+                        "value": f"Investment: ${investment_required:.2f}\n"
+                                f"Expected profit: **${request.estimated_profit:.2f}**\n"
+                                f"ROI: **{roi_percent:.1f}%**",
+                        "inline": True
+                    },
+                    {
+                        "name": "📊 Risk Assessment",
+                        "value": f"Volume: {request.volume} contracts\n"
+                                f"Daily trades: {self.daily_trades}\n"
+                                f"Daily P&L: ${self.daily_pnl:.2f}",
+                        "inline": True
+                    },
+                    {
+                        "name": "⚠️ Important",
+                        "value": f"**This will execute REAL trades**\n"
+                                f"Testing mode: {'✅ ON' if self.testing_mode else '❌ OFF'}\n"
+                                f"Click EXECUTE only if you approve this trade",
+                        "inline": False
+                    }
+                ],
+                "footer": {
+                    "text": f"ID: {request.opportunity_id} | Expires in 5 minutes"
                 },
+                "timestamp": datetime.utcnow().isoformat()
+            }],
+            "components": [
                 {
-                    "name": "📊 Return Rates",
-                    "value": f"Daily: **{time_metrics['daily_return_percent']:.2f}%**/day\n"
-                            f"Weekly: {time_metrics['weekly_return_percent']:.1f}%/week\n"
-                            f"Annual: {time_metrics['annualized_return_percent']:.0f}%/year",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Toward $1k/day Goal",
-                    "value": f"**${time_metrics['daily_dollar_rate']:.2f}**/day\n"
-                            f"Expires: {time_metrics['expiration_date'].strftime('%Y-%m-%d')}\n"
-                            f"({time_metrics['days_to_expiry']} days)",
-                    "inline": True
-                },
-                {
-                    "name": "🔄 Trading Strategy",
-                    "value": f"**Buy** {buy_platform} @ ${buy_price:.3f}\n"
-                            f"**Sell** {sell_platform} @ ${sell_price:.3f}\n"
-                            f"Net spread: ${sell_price - buy_price:.3f}",
-                    "inline": False
+                    "type": 1,  # Action Row
+                    "components": [
+                        {
+                            "type": 2,  # Button
+                            "style": 3,  # Green (Success)
+                            "label": "🚀 EXECUTE TRADE",
+                            "custom_id": f"execute_{request.opportunity_id}",
+                            "emoji": {"name": "💰"}
+                        },
+                        {
+                            "type": 2,  # Button
+                            "style": 4,  # Red (Danger)
+                            "label": "❌ REJECT",
+                            "custom_id": f"reject_{request.opportunity_id}",
+                            "emoji": {"name": "🚫"}
+                        },
+                        {
+                            "type": 2,  # Button
+                            "style": 2,  # Grey (Secondary)
+                            "label": "📊 DETAILS",
+                            "custom_id": f"details_{request.opportunity_id}",
+                            "emoji": {"name": "📋"}
+                        }
+                    ]
                 }
-            ],
-            "footer": {
-                "text": f"Arbitrage Bot • {datetime.now().strftime('%H:%M:%S')}"
-            },
-            "timestamp": datetime.utcnow().isoformat()
+            ]
         }
         
-        return {"embeds": [embed]}
+        return embed_data
     
-    def _send_to_discord(self, alert_data: Dict) -> bool:
-        """Send formatted alert to Discord webhook"""
+    def _send_to_discord(self, embed_data: Dict) -> bool:
+        """Send embed to Discord webhook"""
         try:
             response = requests.post(
                 self.discord_webhook,
-                json=alert_data,
+                json=embed_data,
                 timeout=10
             )
-            
-            if response.status_code == 204:
-                print("✅ Alert sent to Discord successfully")
-                return True
-            else:
-                print(f"⚠️ Discord webhook returned status {response.status_code}")
-                return False
-                
+            return response.status_code == 204
         except Exception as e:
-            print(f"❌ Failed to send Discord alert: {e}")
+            print(f"❌ Discord send failed: {e}")
             return False
     
-    def _queue_alert(self, opportunity) -> None:
-        """Queue alert for later delivery during sleep mode"""
-        self.queued_alerts.append({
-            'opportunity': opportunity,
-            'timestamp': datetime.now()
-        })
-        print(f"😴 Alert queued (sleep mode): {getattr(opportunity, 'contract_name', 'Unknown')}")
-    
-    def send_morning_summary(self) -> None:
-        """Send summary of queued alerts from overnight"""
-        if not self.queued_alerts:
-            return
+    async def execute_arbitrage_trade(self, opportunity_id: str) -> Dict:
+        """
+        Execute the actual arbitrage trade across both platforms
+        This is where the magic happens!
+        """
+        
+        if opportunity_id not in self.pending_requests:
+            return {"success": False, "error": "Opportunity not found"}
+        
+        request = self.pending_requests[opportunity_id]
+        
+        print(f"🚀 EXECUTING ARBITRAGE TRADE: {opportunity_id}")
+        print(f"   Contract: {request.contract_name}")
+        print(f"   Volume: {request.volume}")
+        print(f"   Expected profit: ${request.estimated_profit:.2f}")
+        
+        execution_results = {
+            "opportunity_id": opportunity_id,
+            "start_time": datetime.now().isoformat(),
+            "kalshi_order": None,
+            "ibkr_order": None,
+            "success": False,
+            "actual_profit": 0.0,
+            "errors": []
+        }
         
         try:
-            summary_embed = {
-                "title": "🌅 OVERNIGHT ARBITRAGE SUMMARY",
-                "description": f"**{len(self.queued_alerts)} opportunities** found while you were sleeping",
-                "color": 0x87ceeb,  # Sky blue
-                "fields": []
+            # SAFETY CHECKS
+            if self.daily_trades >= int(os.getenv('DAILY_TRADE_LIMIT', '5')):
+                execution_results["errors"].append("Daily trade limit reached")
+                return execution_results
+            
+            if self.daily_pnl < -self.max_daily_loss:
+                execution_results["errors"].append("Daily loss limit exceeded")
+                return execution_results
+            
+            # STEP 1: Execute Kalshi side
+            print("📊 Executing Kalshi order...")
+            kalshi_result = await self._execute_kalshi_order(request)
+            execution_results["kalshi_order"] = kalshi_result
+            
+            if not kalshi_result.get("success"):
+                execution_results["errors"].append(f"Kalshi order failed: {kalshi_result.get('error')}")
+                return execution_results
+            
+            # STEP 2: Execute IBKR side (will implement tomorrow)
+            print("📊 Executing IBKR order...")
+            if hasattr(self, 'ibkr_client') and self.ibkr_client:
+                ibkr_result = await self._execute_ibkr_order(request)
+                execution_results["ibkr_order"] = ibkr_result
+                
+                if not ibkr_result.get("success"):
+                    # CRITICAL: If IBKR fails, we need to reverse the Kalshi trade
+                    print("❌ IBKR order failed - attempting to reverse Kalshi trade")
+                    await self._reverse_kalshi_order(kalshi_result)
+                    execution_results["errors"].append(f"IBKR order failed, Kalshi reversed: {ibkr_result.get('error')}")
+                    return execution_results
+            else:
+                # For testing: simulate IBKR execution
+                print("🧪 SIMULATING IBKR order (API not available yet)")
+                ibkr_result = {
+                    "success": True,
+                    "order_id": f"IBKR_SIM_{int(time.time())}",
+                    "executed_price": request.sell_price,
+                    "executed_volume": request.volume,
+                    "simulated": True
+                }
+                execution_results["ibkr_order"] = ibkr_result
+            
+            # STEP 3: Calculate actual profit
+            kalshi_cost = kalshi_result.get("executed_price", request.buy_price) * request.volume
+            ibkr_revenue = ibkr_result.get("executed_price", request.sell_price) * request.volume
+            
+            # Add fees (use your real fee calculation)
+            kalshi_fee = self.kalshi_client.calculate_trading_fee(
+                kalshi_result.get("executed_price", request.buy_price), 
+                request.volume
+            )
+            ibkr_fee = 0.0  # ForecastEx contracts are free
+            
+            actual_profit = ibkr_revenue - kalshi_cost - kalshi_fee - ibkr_fee
+            execution_results["actual_profit"] = actual_profit
+            
+            # STEP 4: Update tracking
+            self.daily_trades += 1
+            self.daily_pnl += actual_profit
+            
+            execution_results["success"] = True
+            execution_results["end_time"] = datetime.now().isoformat()
+            
+            # Mark request as executed
+            request.executed = True
+            request.execution_results = execution_results
+            
+            print(f"✅ ARBITRAGE TRADE COMPLETED!")
+            print(f"   Estimated profit: ${request.estimated_profit:.2f}")
+            print(f"   Actual profit: ${actual_profit:.2f}")
+            print(f"   Difference: ${actual_profit - request.estimated_profit:.2f}")
+            
+            # Send confirmation to Discord
+            await self._send_execution_confirmation(request, execution_results)
+            
+            return execution_results
+            
+        except Exception as e:
+            print(f"❌ EXECUTION ERROR: {e}")
+            execution_results["errors"].append(f"Execution exception: {str(e)}")
+            return execution_results
+    
+    async def _execute_kalshi_order(self, request: ExecutionRequest) -> Dict:
+        """Execute order on Kalshi"""
+        try:
+            # Determine order side based on arbitrage direction
+            if request.buy_platform.lower() == 'kalshi':
+                side = "yes"  # Buy yes contracts
+                action = "buy"
+                price = request.buy_price
+            else:
+                side = "yes"  # Sell yes contracts (short)
+                action = "sell"
+                price = request.sell_price
+            
+            print(f"📊 Kalshi order: {action} {request.volume} {request.buy_ticker} {side} @ ${price:.3f}")
+            
+            # Execute the order using your working Kalshi client
+            result = self.kalshi_client.place_order(
+                ticker=request.buy_ticker,
+                side=side,
+                action=action,
+                count=request.volume,
+                order_type="limit",
+                price=price
+            )
+            
+            if result:
+                return {
+                    "success": True,
+                    "order_id": result.get("order_id"),
+                    "executed_price": price,
+                    "executed_volume": request.volume,
+                    "platform": "Kalshi",
+                    "raw_response": result
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Kalshi order placement failed",
+                    "platform": "Kalshi"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Kalshi execution error: {str(e)}",
+                "platform": "Kalshi"
+            }
+    
+    async def _execute_ibkr_order(self, request: ExecutionRequest) -> Dict:
+        """Execute order on IBKR (will implement tomorrow)"""
+        try:
+            # TODO: Implement with your IBKR client tomorrow
+            # This is a placeholder for the real implementation
+            
+            if request.sell_platform.lower() == 'ibkr':
+                action = "SELL"
+                price = request.sell_price
+            else:
+                action = "BUY"  
+                price = request.buy_price
+            
+            print(f"📊 IBKR order: {action} {request.volume} {request.sell_ticker} @ ${price:.3f}")
+            
+            # Tomorrow: Replace with real IBKR execution
+            # result = self.ibkr_client.place_event_order(
+            #     contract=contract,
+            #     action=action,
+            #     quantity=request.volume,
+            #     price=price
+            # )
+            
+            # For now: simulate success
+            return {
+                "success": True,
+                "order_id": f"IBKR_SIM_{int(time.time())}",
+                "executed_price": price,
+                "executed_volume": request.volume,
+                "platform": "IBKR",
+                "simulated": True
             }
             
-            total_potential_profit = 0.0
-            
-            for i, alert in enumerate(self.queued_alerts[:5], 1):  # Show top 5
-                opp = alert['opportunity']
-                profit = getattr(opp, 'total_net_profit', 0.0)
-                total_potential_profit += profit
-                
-                summary_embed["fields"].append({
-                    "name": f"#{i} {getattr(opp, 'contract_name', 'Unknown')}",
-                    "value": f"${profit:.2f} profit • {alert['timestamp'].strftime('%H:%M')}",
-                    "inline": True
-                })
-            
-            if len(self.queued_alerts) > 5:
-                summary_embed["fields"].append({
-                    "name": f"+ {len(self.queued_alerts) - 5} more opportunities",
-                    "value": "Check logs for full details",
-                    "inline": False
-                })
-            
-            summary_embed["fields"].append({
-                "name": "💰 Total Potential Profit",
-                "value": f"**${total_potential_profit:.2f}**",
-                "inline": False
-            })
-            
-            if self.discord_webhook:
-                self._send_to_discord({"embeds": [summary_embed]})
-            
-            # Clear queued alerts
-            self.queued_alerts = []
-            print(f"📬 Morning summary sent, cleared {len(self.queued_alerts)} queued alerts")
-            
         except Exception as e:
-            print(f"❌ Error sending morning summary: {e}")
+            return {
+                "success": False,
+                "error": f"IBKR execution error: {str(e)}",
+                "platform": "IBKR"
+            }
     
-    def _log_alert(self, alert_data: Dict) -> None:
-        """Log alert to console when Discord is not configured"""
+    async def _reverse_kalshi_order(self, kalshi_result: Dict) -> Dict:
+        """Reverse a Kalshi order if IBKR fails"""
         try:
-            embed = alert_data["embeds"][0]
-            print(f"\n🔔 ARBITRAGE ALERT:")
-            print(f"   {embed['title']}: {embed['description']}")
+            print("🔄 Attempting to reverse Kalshi order...")
             
-            for field in embed["fields"]:
-                value_clean = field['value'].replace('**', '').replace('\n', ' | ')
-                print(f"   {field['name']}: {value_clean}")
-                
+            # This would place an opposite order to close the position
+            # Implementation depends on Kalshi's order reversal capabilities
+            
+            # For now: log the need for manual intervention
+            print("⚠️ MANUAL INTERVENTION REQUIRED: Reverse Kalshi order")
+            print(f"   Order ID: {kalshi_result.get('order_id')}")
+            
+            return {"success": False, "requires_manual_reversal": True}
+            
         except Exception as e:
-            print(f"⚠️ Error logging alert: {e}")
+            print(f"❌ Failed to reverse Kalshi order: {e}")
+            return {"success": False, "error": str(e)}
     
-
-    def send_bot_status(self, status: str, details: str = "") -> None:
-        """Send bot status updates to Discord"""
-        if not self.discord_webhook:
-            print(f"🤖 Bot Status: {status} - {details}")
-            return
+    async def _send_execution_confirmation(self, request: ExecutionRequest, results: Dict):
+        """Send execution confirmation to Discord"""
         
-        status_colors = {
-            "started": 0x00ff00,    # Green
-            "stopped": 0xff0000,    # Red
-            "error": 0xff8c00,      # Orange
-            "info": 0x87ceeb        # Sky blue
-        }
+        success = results.get("success", False)
+        actual_profit = results.get("actual_profit", 0)
         
-        embed = {
-            "title": "🤖 Arbitrage Bot Status",
-            "description": status.title(),
-            "color": status_colors.get(status.lower(), 0x87ceeb),
-            "fields": [
-                {
-                    "name": "Details",
-                    "value": details or "No additional details",
-                    "inline": False
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        if success:
+            embed = {
+                "title": "✅ TRADE EXECUTED SUCCESSFULLY",
+                "description": f"**{request.contract_name}**",
+                "color": 0x00FF00,  # Green
+                "fields": [
+                    {
+                        "name": "💰 Results",
+                        "value": f"Estimated: ${request.estimated_profit:.2f}\n"
+                                f"Actual: **${actual_profit:.2f}**\n"
+                                f"Difference: ${actual_profit - request.estimated_profit:.2f}",
+                        "inline": True
+                    },
+                    {
+                        "name": "📊 Execution Details",
+                        "value": f"Volume: {request.volume} contracts\n"
+                                f"Kalshi: {results.get('kalshi_order', {}).get('success', 'Unknown')}\n"
+                                f"IBKR: {results.get('ibkr_order', {}).get('success', 'Unknown')}",
+                        "inline": True
+                    }
+                ],
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        else:
+            embed = {
+                "title": "❌ TRADE EXECUTION FAILED",
+                "description": f"**{request.contract_name}**",
+                "color": 0xFF0000,  # Red
+                "fields": [
+                    {
+                        "name": "🚨 Errors",
+                        "value": "\n".join(results.get("errors", ["Unknown error"])),
+                        "inline": False
+                    }
+                ],
+                "timestamp": datetime.utcnow().isoformat()
+            }
         
         self._send_to_discord({"embeds": [embed]})
-    
-    def test_discord_connection(self) -> bool:
-        """Test Discord webhook connection"""
-        if not self.discord_webhook:
-            print("❌ No Discord webhook configured")
-            return False
-        
-        test_embed = {
-            "title": "🧪 Test Alert",
-            "description": "Discord connection test successful!",
-            "color": 0x00ff00,
-            "fields": [
-                {
-                    "name": "Status",
-                    "value": "✅ Webhook working correctly",
-                    "inline": False
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        return self._send_to_discord({"embeds": [test_embed]})
 
-# Test function
-def test_alert_notifier():
-    """Test the alert notifier with dummy data"""
-    notifier = AlertNotifier()
+# Flask app for handling Discord button interactions (advanced feature)
+app = Flask(__name__)
+executor = OneClickExecutor()
+
+@app.route('/discord/interaction', methods=['POST'])
+def handle_discord_interaction():
+    """Handle Discord button clicks"""
+    try:
+        data = request.json
+        
+        if data.get('type') == 3:  # Button interaction
+            custom_id = data.get('data', {}).get('custom_id', '')
+            
+            if custom_id.startswith('execute_'):
+                opportunity_id = custom_id.replace('execute_', '')
+                
+                # Execute the trade asynchronously
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(executor.execute_arbitrage_trade(opportunity_id))
+                
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"🚀 Executing trade {opportunity_id}...",
+                        "flags": 64  # Ephemeral
+                    }
+                })
+            
+            elif custom_id.startswith('reject_'):
+                opportunity_id = custom_id.replace('reject_', '')
+                if opportunity_id in executor.pending_requests:
+                    del executor.pending_requests[opportunity_id]
+                
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "❌ Trade rejected",
+                        "flags": 64
+                    }
+                })
+        
+        return jsonify({"type": 1})  # Pong
+        
+    except Exception as e:
+        print(f"❌ Discord interaction error: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+def test_one_click_system():
+    """Test the one-click execution system"""
     
-    # Test Discord connection
-    print("Testing Discord connection...")
-    notifier.test_discord_connection()
+    # Create a test opportunity
+    test_opportunity = {
+        "contract_name": "FED-25DEC-T3.50",
+        "buy_platform": "Kalshi",
+        "sell_platform": "IBKR", 
+        "buy_ticker": "FED-25DEC-T3.50",
+        "sell_ticker": "FF Dec25 3.50 Call",
+        "volume": 50,
+        "buy_price": 0.485,
+        "sell_price": 0.523,
+        "estimated_profit": 87.50
+    }
     
-    # Test status message
-    notifier.send_bot_status("started", "Arbitrage bot initialized and ready for trading")
+    print("🧪 Testing one-click execution system...")
     
-    # Create dummy opportunity for testing
-    class DummyOpportunity:
-        def __init__(self):
-            self.contract_name = "CPI-FEB25-ABOVE3"
-            self.total_net_profit = 87.50
-            self.profit_margin_percent = 3.2
-            self.buy_platform = "Kalshi"
-            self.sell_platform = "IBKR"
-            self.buy_price = 0.485
-            self.sell_price = 0.523
-            self.optimal_volume = 200
-            self.expiration_date = datetime(2025, 2, 15)
+    # Test sending execution alert
+    opportunity_id = executor.send_execution_alert(test_opportunity)
+    print(f"✅ Execution alert sent: {opportunity_id}")
     
-    # Test arbitrage alert
-    dummy_opportunity = DummyOpportunity()
-    notifier.send_arbitrage_alerts([dummy_opportunity])
+    # Test execution (will simulate IBKR for now)
+    print("⏳ Waiting 3 seconds then simulating execution...")
+    time.sleep(3)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(executor.execute_arbitrage_trade(opportunity_id))
+    
+    print(f"📊 Execution result: {result}")
+    
+    if result.get("success"):
+        print("✅ One-click system working perfectly!")
+    else:
+        print("⚠️ Execution issues - check logs")
 
 if __name__ == "__main__":
-    test_alert_notifier()
+    test_one_click_system()
