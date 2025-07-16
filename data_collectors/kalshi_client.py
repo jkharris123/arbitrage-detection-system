@@ -21,7 +21,7 @@ class KalshiClient:
         load_dotenv()
         
         self.api_key_id = os.getenv('KALSHI_API_KEY_ID')
-        self.base_url = "https://api.elections.kalshi.com/trade-api/v2"
+        self.base_url = "https://demo-api.kalshi.co/trade-api/v2"
         
         self.private_key = None
         self.session = requests.Session()
@@ -169,6 +169,34 @@ class KalshiClient:
         except Exception as e:
             print(f"❌ Authentication test failed: {e}")
             
+        return None
+    
+def place_order(self, ticker: str, side: str, action: str, count: int, 
+               order_type: str = "limit", price: float = None) -> Optional[Dict]:
+    """Place an order on Kalshi"""
+    if order_type == "limit" and price is None:
+        raise ValueError("Limit orders require a price")
+    
+    order_data = {
+        "ticker": ticker,
+        "side": side, 
+        "action": action,
+        "count": count,
+        "type": order_type
+    }
+    
+    if price is not None:
+        order_data["price"] = int(price * 100)  # Kalshi uses cents
+    
+    print(f"📝 Placing order: {action} {count} {ticker} {side} @ ${price}")
+    
+    response = self._make_authenticated_request("POST", "/portfolio/orders", order_data)
+    
+    if response:
+        print(f"✅ Order placed successfully")
+        return response
+    else:
+        print(f"❌ Order placement failed")
         return None
 
 def test_kalshi_client():

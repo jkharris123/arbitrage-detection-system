@@ -2,6 +2,7 @@
 """
 Configuration settings for the arbitrage bot
 Includes real fee structures from Kalshi and IBKR
+Updated with demo/test environment support for zero-risk testing
 """
 
 import os
@@ -15,29 +16,129 @@ class Settings:
     """Configuration settings for the arbitrage bot"""
     
     def __init__(self):
+        # Environment mode - determines which APIs and credentials to use
+        self.environment = os.getenv('ENVIRONMENT', 'DEMO').upper()  # DEMO, PAPER, LIVE
+        
         # Trading parameters
         self.min_profit_margin_percent = float(os.getenv('MIN_PROFIT_MARGIN', '1.0'))  # 1% minimum
         self.max_position_size = int(os.getenv('MAX_POSITION_SIZE', '1000'))  # Max contracts per trade
-        self.scan_interval_seconds = int(os.getenv('SCAN_INTERVAL', '900'))  # 30 second scans
+        self.scan_interval_seconds = int(os.getenv('SCAN_INTERVAL', '900'))  # 15 minute scans
         
-        # Risk management
+        # Risk management (for live trading only - demos are risk-free)
         self.max_total_exposure = float(os.getenv('MAX_TOTAL_EXPOSURE', '10000'))  # $10k max exposure
         self.max_slippage_tolerance = float(os.getenv('MAX_SLIPPAGE', '0.02'))  # 2% max slippage
         
-        # API credentials
-        self.kalshi_api_key = os.getenv('KALSHI_API_KEY')
-        self.kalshi_user_id = os.getenv('KALSHI_USER_ID')
-        self.kalshi_password = os.getenv('KALSHI_PASSWORD')
+        # Demo/Test capital limits
+        self.demo_capital_kalshi = float(os.getenv('DEMO_CAPITAL_KALSHI', '1000'))
+        self.demo_capital_polymarket = float(os.getenv('DEMO_CAPITAL_POLYMARKET', '1000'))
+        
+        # API credentials - environment specific
+        self.kalshi_credentials = self._get_kalshi_credentials()
+        self.ibkr_credentials = self._get_ibkr_credentials()
+        self.polymarket_credentials = self._get_polymarket_credentials()
         
         # Alert settings
         self.email_enabled = os.getenv('EMAIL_ALERTS', 'False').lower() == 'true'
         self.discord_webhook = os.getenv('DISCORD_WEBHOOK')
         self.sms_enabled = os.getenv('SMS_ALERTS', 'False').lower() == 'true'
         
-        # Fee structures
+        # Fee structures (same for all environments)
         self.kalshi_fees = self._get_kalshi_fee_structure()
         self.ibkr_fees = self._get_ibkr_fee_structure()
+        self.polymarket_fees = self._get_polymarket_fee_structure()
         
+        # Platform endpoints based on environment
+        self.api_endpoints = self._get_api_endpoints()
+        
+    def _get_kalshi_credentials(self) -> Dict[str, Any]:
+        """Get Kalshi credentials based on environment"""
+        if self.environment == 'DEMO':
+            return {
+                'base_url': 'https://demo-api.kalshi.co/trade-api/v2',
+                'email': os.getenv('KALSHI_DEMO_EMAIL'),
+                'password': os.getenv('KALSHI_DEMO_PASSWORD'),
+                'private_key_path': os.getenv('KALSHI_DEMO_PRIVATE_KEY_PATH', './keys/kalshi_demo_private_key.pem'),
+                'rate_limit_per_minute': 100  # More lenient for demo
+            }
+        elif self.environment == 'LIVE':
+            return {
+                'base_url': 'https://trading-api.kalshi.co/trade-api/v2',
+                'email': os.getenv('KALSHI_EMAIL'),
+                'password': os.getenv('KALSHI_PASSWORD'),
+                'private_key_path': os.getenv('KALSHI_PRIVATE_KEY_PATH', './keys/kalshi_private_key.pem'),
+                'rate_limit_per_minute': 50
+            }
+        else:  # PAPER - use demo for now
+            return self._get_kalshi_credentials_demo()
+    
+    def _get_ibkr_credentials(self) -> Dict[str, Any]:
+        """Get IBKR credentials based on environment"""
+        if self.environment in ['DEMO', 'PAPER']:
+            return {
+                'host': os.getenv('IBKR_HOST', '127.0.0.1'),
+                'port': int(os.getenv('IBKR_PAPER_PORT', '7497')),  # Paper trading port
+                'client_id': int(os.getenv('IBKR_CLIENT_ID', '1')),
+                'account': os.getenv('IBKR_PAPER_ACCOUNT'),
+                'paper_trading': True
+            }
+        else:  # LIVE
+            return {
+                'host': os.getenv('IBKR_HOST', '127.0.0.1'),
+                'port': int(os.getenv('IBKR_LIVE_PORT', '7496')),  # Live trading port
+                'client_id': int(os.getenv('IBKR_CLIENT_ID', '1')),
+                'account': os.getenv('IBKR_LIVE_ACCOUNT'),
+                'paper_trading': False
+            }
+    
+    def _get_polymarket_credentials(self) -> Dict[str, Any]:
+        """Get Polymarket credentials based on environment"""
+        if self.environment in ['DEMO', 'PAPER']:
+            return {
+                'api_url': 'https://clob.polymarket.com',
+                'gamma_url': 'https://gamma-api.polymarket.com',
+                'rpc_url': os.getenv('MUMBAI_RPC_URL', 'https://rpc-mumbai.maticvigil.com/'),
+                'chain_id': 80001,  # Mumbai testnet
+                'private_key': os.getenv('POLYMARKET_TESTNET_PRIVATE_KEY'),
+                'wallet_address': os.getenv('POLYMARKET_TESTNET_WALLET'),
+                'usdc_address': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',  # Mumbai USDC
+                'testnet': True
+            }
+        else:  # LIVE
+            return {
+                'api_url': 'https://clob.polymarket.com',
+                'gamma_url': 'https://gamma-api.polymarket.com',
+                'rpc_url': os.getenv('POLYGON_RPC_URL', 'https://polygon-rpc.com/'),
+                'chain_id': 137,  # Polygon mainnet
+                'private_key': os.getenv('POLYMARKET_PRIVATE_KEY'),
+                'wallet_address': os.getenv('POLYMARKET_WALLET'),
+                'usdc_address': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',  # Polygon USDC
+                'testnet': False
+            }
+    
+    def _get_api_endpoints(self) -> Dict[str, Dict[str, str]]:
+        """Get API endpoints for each platform"""
+        return {
+            'kalshi': {
+                'login': '/login',
+                'markets': '/markets',
+                'market_orderbook': '/markets/{market_ticker}/orderbook',
+                'portfolio': '/portfolio',
+                'orders': '/portfolio/orders',
+                'place_order': '/portfolio/orders'
+            },
+            'polymarket': {
+                'markets': '/markets',
+                'orderbook': '/book',
+                'prices': '/prices',
+                'trades': '/trades',
+                'user_orders': '/orders'
+            },
+            'ibkr': {
+                'host': self.ibkr_credentials['host'],
+                'port': self.ibkr_credentials['port']
+            }
+        }
+    
     def _get_kalshi_fee_structure(self) -> Dict[str, Any]:
         """
         Real Kalshi fee structure from their documentation
@@ -101,6 +202,15 @@ class Settings:
             'overnight_position_fees': 'varies'
         }
     
+    def _get_polymarket_fee_structure(self) -> Dict[str, Any]:
+        """Polymarket fee structure"""
+        return {
+            'trading_fees': 0.0,  # 0% trading fees
+            'gas_estimate_mainnet': 5.0,  # $5 estimate for Polygon gas
+            'gas_estimate_testnet': 0.1,  # $0.10 for Mumbai testnet
+            'gas_limit_estimate': 150000,  # Gas limit for typical trade
+        }
+    
     def get_kalshi_trading_fee(self, price: float, contracts: int, 
                               market_type: str = 'general') -> float:
         """
@@ -144,6 +254,13 @@ class Settings:
         else:
             return 0.0
     
+    def get_polymarket_gas_fee(self) -> float:
+        """Get estimated gas fee for Polymarket trades"""
+        if self.environment in ['DEMO', 'PAPER']:
+            return self.polymarket_fees['gas_estimate_testnet']
+        else:
+            return self.polymarket_fees['gas_estimate_mainnet']
+    
     def is_sp500_or_nasdaq_market(self, ticker: str) -> bool:
         """Check if market qualifies for reduced Kalshi fees"""
         ticker_upper = ticker.upper()
@@ -165,6 +282,22 @@ class Settings:
         else:
             return 0.02 * price   # 2% for very large orders
     
+    def get_total_cost_kalshi(self, contracts: int, price: float, market_type: str = 'general') -> float:
+        """Calculate total cost including fees for Kalshi trade"""
+        base_cost = contracts * price
+        trading_fee = self.get_kalshi_trading_fee(price, contracts, market_type)
+        return base_cost + trading_fee
+    
+    def get_total_cost_polymarket(self, contracts: int, price: float) -> float:
+        """Calculate total cost including gas for Polymarket trade"""
+        base_cost = contracts * price
+        gas_fee = self.get_polymarket_gas_fee()
+        return base_cost + gas_fee
+    
+    def is_demo_mode(self) -> bool:
+        """Check if running in demo/test mode"""
+        return self.environment in ['DEMO', 'PAPER']
+    
     def validate_configuration(self) -> bool:
         """Validate configuration settings"""
         issues = []
@@ -178,8 +311,17 @@ class Settings:
         if self.scan_interval_seconds < 60:
             issues.append("Scan interval should be at least 60 seconds for API stability")
             
-        if not self.kalshi_api_key and os.getenv('PRODUCTION', 'False').lower() == 'true':
-            issues.append("Kalshi API key required for production")
+        # Check required credentials based on environment
+        if self.environment == 'DEMO':
+            if not self.kalshi_credentials.get('email'):
+                issues.append("Kalshi demo email required for demo mode")
+            if not self.polymarket_credentials.get('private_key'):
+                issues.append("Polymarket testnet private key required for demo mode")
+        elif self.environment == 'LIVE':
+            if not self.kalshi_credentials.get('email'):
+                issues.append("Kalshi credentials required for live mode")
+            if not self.polymarket_credentials.get('private_key'):
+                issues.append("Polymarket credentials required for live mode")
             
         if issues:
             print("⚠️ Configuration issues:")
@@ -192,12 +334,15 @@ class Settings:
     def get_summary(self) -> Dict[str, Any]:
         """Get configuration summary for logging"""
         return {
+            'environment': self.environment,
             'min_profit_margin': f"{self.min_profit_margin_percent}%",
             'max_position_size': self.max_position_size,
             'scan_interval': f"{self.scan_interval_seconds}s",
             'max_exposure': f"${self.max_total_exposure:,.2f}",
+            'demo_mode': self.is_demo_mode(),
             'kalshi_fees_enabled': True,
             'ibkr_fees_enabled': True,
+            'polymarket_fees_enabled': True,
             'alerts_email': self.email_enabled,
             'alerts_discord': bool(self.discord_webhook),
             'alerts_sms': self.sms_enabled
