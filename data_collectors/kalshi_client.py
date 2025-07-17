@@ -132,15 +132,14 @@ class KalshiClient:
         
         return base64.b64encode(signature).decode('utf-8')
     
-    def test_authentication(self):
-        """Test authenticated endpoint"""
-        print("🧪 Testing authentication...")
-        
-        path = "/trade-api/v2/portfolio/balance"
-        timestamp_str = str(int(time.time() * 1000))
-        
+    def _make_authenticated_request(self, method: str, endpoint: str, data: Dict = None) -> Optional[Dict]:
+        """Make authenticated request to Kalshi API"""
         try:
-            signature = self._sign_request("GET", path, timestamp_str)
+            path = f"/trade-api/v2{endpoint}"
+            timestamp_str = str(int(time.time() * 1000))
+            body = json.dumps(data) if data else ""
+            
+            signature = self._sign_request(method, path, timestamp_str, body)
             
             headers = {
                 'KALSHI-ACCESS-KEY': self.api_key_id,
@@ -149,27 +148,41 @@ class KalshiClient:
                 'Content-Type': 'application/json'
             }
             
-            response = self.session.get(
-                f"{self.base_url}/portfolio/balance",
-                headers=headers,
-                timeout=10
-            )
+            url = f"{self.base_url}{endpoint}"
             
-            print(f"🔍 Auth test status: {response.status_code}")
+            if method.upper() == 'GET':
+                response = self.session.get(url, headers=headers, timeout=10)
+            elif method.upper() == 'POST':
+                response = self.session.post(url, headers=headers, data=body, timeout=10)
+            else:
+                raise ValueError(f"Unsupported method: {method}")
             
             if response.status_code == 200:
-                print("✅ Authentication successful!")
                 return response.json()
-            elif response.status_code == 401:
-                print("❌ Authentication failed - check API key or signature")
-                print(f"🔍 Response: {response.text}")
             else:
-                print(f"⚠️ Unexpected response: {response.status_code} - {response.text}")
+                print(f"⚠️ API request failed: {response.status_code} - {response.text}")
+                return None
                 
         except Exception as e:
-            print(f"❌ Authentication test failed: {e}")
+            print(f"❌ Request error: {e}")
+            return None
+    
+    def get_markets(self) -> List[Dict]:
+        """Get all active markets from Kalshi"""
+        try:
+            response = self._make_authenticated_request("GET", "/markets")
             
-        return None
+            if response and 'markets' in response:
+                markets = response['markets']
+                print(f"📊 Fetched {len(markets)} markets from Kalshi")
+                return markets
+            else:
+                print("⚠️ No markets data in response")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Error fetching markets: {e}")
+            return []
     
 def place_order(self, ticker: str, side: str, action: str, count: int, 
                order_type: str = "limit", price: float = None) -> Optional[Dict]:

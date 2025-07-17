@@ -55,21 +55,19 @@ class Settings:
         if self.environment == 'DEMO':
             return {
                 'base_url': 'https://demo-api.kalshi.co/trade-api/v2',
-                'email': os.getenv('KALSHI_DEMO_EMAIL'),
-                'password': os.getenv('KALSHI_DEMO_PASSWORD'),
-                'private_key_path': os.getenv('KALSHI_DEMO_PRIVATE_KEY_PATH', './keys/kalshi_demo_private_key.pem'),
+                'api_key_id': os.getenv('KALSHI_API_KEY_ID'),
+                'private_key_path': os.getenv('KALSHI_PRIVATE_KEY_FILE', 'kalshi-demo-private-key.pem'),
                 'rate_limit_per_minute': 100  # More lenient for demo
             }
         elif self.environment == 'LIVE':
             return {
                 'base_url': 'https://trading-api.kalshi.co/trade-api/v2',
-                'email': os.getenv('KALSHI_EMAIL'),
-                'password': os.getenv('KALSHI_PASSWORD'),
-                'private_key_path': os.getenv('KALSHI_PRIVATE_KEY_PATH', './keys/kalshi_private_key.pem'),
+                'api_key_id': os.getenv('KALSHI_API_KEY_ID'),
+                'private_key_path': os.getenv('KALSHI_PRIVATE_KEY_FILE', 'kalshi-private-key.pem'),
                 'rate_limit_per_minute': 50
             }
         else:  # PAPER - use demo for now
-            return self._get_kalshi_credentials_demo()
+            return self._get_kalshi_credentials()
     
     def _get_ibkr_credentials(self) -> Dict[str, Any]:
         """Get IBKR credentials based on environment"""
@@ -91,29 +89,15 @@ class Settings:
             }
     
     def _get_polymarket_credentials(self) -> Dict[str, Any]:
-        """Get Polymarket credentials based on environment"""
-        if self.environment in ['DEMO', 'PAPER']:
-            return {
-                'api_url': 'https://clob.polymarket.com',
-                'gamma_url': 'https://gamma-api.polymarket.com',
-                'rpc_url': os.getenv('MUMBAI_RPC_URL', 'https://rpc-mumbai.maticvigil.com/'),
-                'chain_id': 80001,  # Mumbai testnet
-                'private_key': os.getenv('POLYMARKET_TESTNET_PRIVATE_KEY'),
-                'wallet_address': os.getenv('POLYMARKET_TESTNET_WALLET'),
-                'usdc_address': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',  # Mumbai USDC
-                'testnet': True
-            }
-        else:  # LIVE
-            return {
-                'api_url': 'https://clob.polymarket.com',
-                'gamma_url': 'https://gamma-api.polymarket.com',
-                'rpc_url': os.getenv('POLYGON_RPC_URL', 'https://polygon-rpc.com/'),
-                'chain_id': 137,  # Polygon mainnet
-                'private_key': os.getenv('POLYMARKET_PRIVATE_KEY'),
-                'wallet_address': os.getenv('POLYMARKET_WALLET'),
-                'usdc_address': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',  # Polygon USDC
-                'testnet': False
-            }
+        """Get Polymarket credentials based on environment (read-only for arbitrage detection)"""
+        # For arbitrage detection, we only need read-only access to live data
+        return {
+            'api_url': 'https://clob.polymarket.com',
+            'gamma_url': 'https://gamma-api.polymarket.com',
+            'read_only': True,  # No trading, just data collection
+            'chain_id': 137,  # Polygon mainnet for live data
+            'usdc_address': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
+        }
     
     def _get_api_endpoints(self) -> Dict[str, Dict[str, str]]:
         """Get API endpoints for each platform"""
@@ -313,15 +297,13 @@ class Settings:
             
         # Check required credentials based on environment
         if self.environment == 'DEMO':
-            if not self.kalshi_credentials.get('email'):
-                issues.append("Kalshi demo email required for demo mode")
-            if not self.polymarket_credentials.get('private_key'):
-                issues.append("Polymarket testnet private key required for demo mode")
+            if not self.kalshi_credentials.get('api_key_id'):
+                issues.append("Kalshi API key ID required for demo mode")
+            # Polymarket is read-only, no credentials needed
         elif self.environment == 'LIVE':
-            if not self.kalshi_credentials.get('email'):
-                issues.append("Kalshi credentials required for live mode")
-            if not self.polymarket_credentials.get('private_key'):
-                issues.append("Polymarket credentials required for live mode")
+            if not self.kalshi_credentials.get('api_key_id'):
+                issues.append("Kalshi API key ID required for live mode")
+            # Polymarket is read-only, no credentials needed
             
         if issues:
             print("⚠️ Configuration issues:")

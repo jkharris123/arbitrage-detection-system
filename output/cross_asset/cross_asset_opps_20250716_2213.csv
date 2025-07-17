@@ -1,0 +1,1 @@
+timestamp,opportunity_id,prediction_platform,prediction_ticker,prediction_question,prediction_price,prediction_side,tradfi_instrument,tradfi_action,tradfi_price,strategy_type,estimated_profit,confidence_score,complexity,time_to_expiry,recommendation
