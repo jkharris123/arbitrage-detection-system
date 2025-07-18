@@ -163,7 +163,7 @@ class DiscordExecutionBot(discord.Client if DISCORD_AVAILABLE else object):
         """
         try:
             # In DEMO mode, simulate execution
-            if settings.ENVIRONMENT == "DEMO":
+            if settings.environment == "DEMO":
                 await asyncio.sleep(2)  # Simulate execution delay
                 
                 result_msg = f"""**DEMO EXECUTION COMPLETED**

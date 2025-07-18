@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Launch System with Economic Focus
-Integrates Discord execution, economic market filtering, and cross-asset detection
+Enhanced Launch System with Unified Discord Bot
+Uses single Discord bot for both alerts and execution commands
 """
 
 import asyncio
@@ -19,13 +19,12 @@ sys.path.append('./config')
 
 from detector_enhanced import EnhancedArbitrageDetector
 try:
-    from discord_execution_bot import DiscordExecutionManager
-    DISCORD_EXECUTION_AVAILABLE = True
+    from unified_discord_bot import UnifiedBotManager
+    DISCORD_AVAILABLE = True
 except ImportError as e:
-    DISCORD_EXECUTION_AVAILABLE = False
-    print(f"⚠️ Discord execution disabled: {e}")
+    DISCORD_AVAILABLE = False
+    print(f"⚠️ Discord bot disabled: {e}")
 from economic_tradfi_filter import EconomicMarketFilter
-from discord_alerter import DiscordArbitrageAlerter
 from settings import settings
 
 logging.basicConfig(
@@ -35,18 +34,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class EnhancedArbitrageSystem:
-    """Complete arbitrage system with economic focus and Discord execution"""
+    """Complete arbitrage system with unified Discord bot"""
     
     def __init__(self):
         self.arbitrage_detector = EnhancedArbitrageDetector()
         self.economic_filter = EconomicMarketFilter()
         
-        if DISCORD_EXECUTION_AVAILABLE:
-            self.discord_manager = DiscordExecutionManager()
+        if DISCORD_AVAILABLE:
+            self.discord_manager = UnifiedBotManager()
         else:
             self.discord_manager = None
-            
-        self.alerter = DiscordArbitrageAlerter(os.getenv('DISCORD_WEBHOOK'))
         
         # Stats tracking
         self.scan_count = 0
@@ -83,7 +80,7 @@ class EnhancedArbitrageSystem:
             cross_asset_opps = self.economic_filter.detect_cross_asset_opportunities(economic_markets)
             self.cross_asset_opportunities = len(cross_asset_opps)
             
-            # Send alerts for profitable opportunities
+            # Send alerts for profitable opportunities via unified bot
             if opportunities:
                 logger.info(f"💰 Found {len(opportunities)} direct arbitrage opportunities")
                 for opp in opportunities:
@@ -95,7 +92,7 @@ class EnhancedArbitrageSystem:
                             logger.info(f"💰 Opportunity: {opp.opportunity_id} - ${opp.guaranteed_profit:.2f} profit")
                         self.opportunities_found += 1
             
-            # Send economic market summary
+            # Send economic market summary via unified bot
             await self._send_economic_summary(economic_markets, cross_asset_opps)
             
             logger.info(f"✅ Scan complete - Found {len(opportunities)} direct + {len(cross_asset_opps)} cross-asset opportunities")
@@ -109,7 +106,8 @@ class EnhancedArbitrageSystem:
             
         except Exception as e:
             logger.error(f"❌ Error in economic scan: {e}")
-            await self.alerter.send_system_status("ERROR", f"Scan failed: {str(e)}")
+            if self.discord_manager:
+                await self.discord_manager.send_market_update(f"❌ Scan failed: {str(e)}")
             return None
     
     async def _send_economic_summary(self, economic_markets, cross_asset_opps):
@@ -142,10 +140,11 @@ class EnhancedArbitrageSystem:
             
             summary += f"\\n\\n⏰ Next scan: {datetime.now().strftime('%H:%M:%S')}"
             
-            # Send via Discord
-            success = await self.alerter.send_market_update(summary)
-            if success:
-                logger.info("📱 Economic summary sent to Discord")
+            # Send via unified Discord bot
+            if self.discord_manager:
+                success = await self.discord_manager.send_market_update(summary)
+                if success:
+                    logger.info("📱 Economic summary sent via Discord bot")
             
         except Exception as e:
             logger.error(f"❌ Error sending economic summary: {e}")
@@ -154,11 +153,15 @@ class EnhancedArbitrageSystem:
         """Run continuous monitoring with economic focus"""
         logger.info(f"🔄 Starting continuous monitoring (every {interval_minutes} minutes)")
         
-        # Send startup message
-        await self.alerter.send_system_status(
-            "ONLINE", 
-            f"🚀 Economic Arbitrage System Active\\n📊 Scanning every {interval_minutes}min\\n🎯 Focus: TradFi + Economic markets ≤14 days"
-        )
+        # Send startup message via unified bot
+        if self.discord_manager:
+            startup_msg = f"""🚀 **Economic Arbitrage System Active**
+📊 Scanning every {interval_minutes} minutes
+🎯 Focus: TradFi + Economic markets ≤14 days
+🤖 Unified bot ready for alerts and execution!
+
+**Commands:** `STATUS`, `EXECUTE A001`, `HALT`, `RESUME`"""
+            await self.discord_manager.send_market_update(startup_msg)
         
         try:
             while True:
@@ -174,21 +177,23 @@ class EnhancedArbitrageSystem:
                 
         except KeyboardInterrupt:
             logger.info("🛑 Monitoring stopped by user")
-            await self.alerter.send_system_status("OFFLINE", "System stopped by user")
+            if self.discord_manager:
+                await self.discord_manager.send_market_update("🛑 **System Offline** - Monitoring stopped by user")
         except Exception as e:
             logger.error(f"❌ Monitoring error: {e}")
-            await self.alerter.send_system_status("ERROR", f"Monitoring failed: {str(e)}")
+            if self.discord_manager:
+                await self.discord_manager.send_market_update(f"❌ **System Error** - Monitoring failed: {str(e)}")
     
-    async def run_discord_execution_bot(self):
-        """Run Discord execution bot for message-based trading"""
+    async def run_unified_discord_bot(self):
+        """Run the unified Discord bot"""
         if not self.discord_manager:
-            logger.error("❌ Discord execution bot not available - Discord not installed")
+            logger.error("❌ Unified Discord bot not available")
             return
-            
-        logger.info("🤖 Starting Discord execution bot...")
+        
+        logger.info("🤖 Starting unified Discord bot...")
         
         try:
-            await self.discord_manager.start_execution_bot()
+            await self.discord_manager.start_bot()
         except Exception as e:
             logger.error(f"❌ Discord bot error: {e}")
     
@@ -204,8 +209,8 @@ class EnhancedArbitrageSystem:
 
 async def main():
     """Main entry point with enhanced options"""
-    parser = argparse.ArgumentParser(description='Enhanced Arbitrage Detection System')
-    parser.add_argument('command', choices=['scan', 'monitor', 'discord', 'economic', 'test'], 
+    parser = argparse.ArgumentParser(description='Enhanced Arbitrage Detection System with Unified Discord Bot')
+    parser.add_argument('command', choices=['scan', 'monitor', 'bot', 'economic', 'test'], 
                        help='Command to run')
     parser.add_argument('--interval', type=int, default=15, 
                        help='Monitoring interval in minutes (default: 15)')
@@ -222,6 +227,7 @@ async def main():
     print(f"🚀 Enhanced Arbitrage System - {args.command.upper()} mode")
     print(f"⚙️ Environment: {settings.environment}")
     print(f"🎯 Economic focus: ≤{args.max_days} days to expiry")
+    print(f"🤖 Discord bot: {'Available' if DISCORD_AVAILABLE else 'Disabled'}")
     print()
     
     try:
@@ -269,11 +275,12 @@ async def main():
             print("Press Ctrl+C to stop")
             await system.run_continuous_monitoring(args.interval)
             
-        elif args.command == 'discord':
-            # Discord execution bot
-            print("🤖 Starting Discord execution bot...")
+        elif args.command == 'bot':
+            # Unified Discord bot
+            print("🤖 Starting unified Discord bot...")
+            print("📱 Bot will handle both alerts and execution commands")
             print("Press Ctrl+C to stop")
-            await system.run_discord_execution_bot()
+            await system.run_unified_discord_bot()
             
     except KeyboardInterrupt:
         print("\\n🛑 System stopped by user")
