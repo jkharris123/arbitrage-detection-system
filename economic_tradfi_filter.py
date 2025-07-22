@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Economic & TradFi Market Filter
-Focus on short-term economic data and traditional finance markets
-Stores data for cross-asset arbitrage opportunities
+Economic Market Filter - SIMPLIFIED
+Focus on short-term economic events for direct event contract arbitrage
+CROSS-ASSET REMOVED - Focus on Kalshi ↔ Polymarket arbitrage only
 """
 
 import asyncio
 import logging
-import json
 import csv
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EconomicMarket:
-    """Economic/TradFi market with cross-asset potential"""
+    """Economic market for direct arbitrage (no cross-asset complexity)"""
     platform: str  # "Kalshi" or "Polymarket"
     ticker: str
     question: str
@@ -33,84 +32,42 @@ class EconomicMarket:
     no_price: float
     volume_24h: float
     
-    # Cross-asset mapping
-    tradfi_equivalent: str  # "SPX Options", "Treasury Futures", etc.
-    arbitrage_potential: str  # "HIGH", "MEDIUM", "LOW"
+    # Simple arbitrage assessment
+    arbitrage_priority: str  # "HIGH", "MEDIUM", "LOW"
     notes: str
 
-@dataclass
-class CrossAssetOpportunity:
-    """Cross-asset arbitrage opportunity"""
-    timestamp: str
-    opportunity_id: str
-    
-    # Prediction market side
-    prediction_platform: str
-    prediction_ticker: str
-    prediction_question: str
-    prediction_price: float
-    prediction_side: str  # "YES" or "NO"
-    
-    # Traditional finance side
-    tradfi_instrument: str  # "SPX Dec 6000 Calls", "10Y Treasury Futures"
-    tradfi_action: str  # "BUY", "SELL", "HEDGE"
-    tradfi_price: str  # "Estimated" or actual
-    
-    # Opportunity analysis
-    strategy_type: str  # "LONG_GAMMA", "RATE_HEDGE", "INDEX_ARB"
-    estimated_profit: float
-    confidence_score: float  # 0-100
-    complexity: int  # 1-5 (1=simple, 5=complex)
-    time_to_expiry: int  # days
-    
-    recommendation: str
-
 class EconomicMarketFilter:
-    """Filter and categorize economic/tradfi markets"""
+    """Filter economic markets for direct event contract arbitrage"""
     
-    # Economic categories and keywords
+    # Economic categories for filtering (no cross-asset mapping)
     ECONOMIC_CATEGORIES = {
         'RATES': {
             'keywords': ['fed', 'federal reserve', 'interest rate', 'fomc', 'basis points', 'bps', 'monetary policy'],
-            'underlying': ['FEDFUNDS', 'EFFR'],
-            'tradfi_equivalent': 'Treasury Futures, SOFR Futures',
-            'instruments': ['ZB', 'ZN', 'ZF', 'ZT', 'SOFR']
+            'underlying': ['FEDFUNDS', 'EFFR']
         },
         'INFLATION': {
             'keywords': ['cpi', 'consumer price index', 'pce', 'inflation', 'deflation', 'price'],
-            'underlying': ['CPI', 'PCE', 'PPI'],
-            'tradfi_equivalent': 'TIPS, Treasury Futures',
-            'instruments': ['TIPS', 'ZB', 'ZN']
+            'underlying': ['CPI', 'PCE', 'PPI']
         },
         'EMPLOYMENT': {
             'keywords': ['unemployment', 'jobs', 'payroll', 'employment', 'jobless', 'nfp'],
-            'underlying': ['NFP', 'UNEMPLOYMENT'],
-            'tradfi_equivalent': 'Bond Futures, Equity Futures',
-            'instruments': ['ES', 'ZB', 'ZN']
+            'underlying': ['NFP', 'UNEMPLOYMENT']
         },
         'GDP': {
             'keywords': ['gdp', 'gross domestic product', 'economic growth', 'recession', 'growth'],
-            'underlying': ['GDP'],
-            'tradfi_equivalent': 'Equity Index Futures',
-            'instruments': ['ES', 'NQ', 'RTY']
+            'underlying': ['GDP']
         },
         'MARKETS': {
             'keywords': ['sp500', 's&p 500', 'nasdaq', 'dow', 'market', 'index', 'spx', 'ndx'],
-            'underlying': ['SPX', 'SPY', 'NDX', 'QQQ', 'DJI'],
-            'tradfi_equivalent': 'Index Options, Index Futures',
-            'instruments': ['ES', 'NQ', 'YM', 'SPX', 'NDX']
+            'underlying': ['SPX', 'SPY', 'NDX', 'QQQ', 'DJI']
         },
         'YIELDS': {
             'keywords': ['yield', 'treasury', 'bond', '10-year', '2-year', 'yield curve'],
-            'underlying': ['10Y', '2Y', '30Y'],
-            'tradfi_equivalent': 'Treasury Futures, Bond Options',
-            'instruments': ['ZB', 'ZN', 'ZF', 'ZT']
+            'underlying': ['10Y', '2Y', '30Y']
         },
         'CRYPTO': {
             'keywords': ['bitcoin', 'btc', 'ethereum', 'eth', 'crypto'],
-            'underlying': ['BTC', 'ETH'],
-            'tradfi_equivalent': 'Bitcoin Futures, ETH Futures',
-            'instruments': ['BTC', 'ETH', 'MBT', 'MET']
+            'underlying': ['BTC', 'ETH']
         }
     }
     
@@ -118,34 +75,25 @@ class EconomicMarketFilter:
         # Setup output directories
         import os
         os.makedirs('./output/economic_markets', exist_ok=True)
-        os.makedirs('./output/cross_asset', exist_ok=True)
         
         # Initialize CSV files
         self.setup_csv_files()
-        
         self.economic_markets = []
-        self.cross_asset_opportunities = []
     
     def setup_csv_files(self):
         """Setup CSV files for tracking"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        
         self.economic_csv = f'./output/economic_markets/economic_markets_{timestamp}.csv'
-        self.cross_asset_csv = f'./output/cross_asset/cross_asset_opps_{timestamp}.csv'
         
         # Initialize CSV headers
         with open(self.economic_csv, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=list(EconomicMarket.__annotations__.keys()))
             writer.writeheader()
-        
-        with open(self.cross_asset_csv, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=list(CrossAssetOpportunity.__annotations__.keys()))
-            writer.writeheader()
     
-    def categorize_market(self, question: str, ticker: str = "") -> Tuple[Optional[str], str, str]:
+    def categorize_market(self, question: str, ticker: str = "") -> Tuple[Optional[str], str]:
         """
         Categorize market and identify underlying asset
-        Returns (category, underlying_asset, tradfi_equivalent)
+        Returns (category, underlying_asset)
         """
         question_lower = question.lower()
         ticker_lower = ticker.lower()
@@ -156,9 +104,9 @@ class EconomicMarketFilter:
                 if keyword in question_lower or keyword in ticker_lower:
                     # Try to identify specific underlying asset
                     underlying = self._identify_underlying(question_lower, ticker_lower, info['underlying'])
-                    return category, underlying, info['tradfi_equivalent']
+                    return category, underlying
         
-        return None, "UNKNOWN", "Unknown"
+        return None, "UNKNOWN"
     
     def _identify_underlying(self, question: str, ticker: str, possible_assets: List[str]) -> str:
         """Identify specific underlying asset"""
@@ -237,23 +185,24 @@ class EconomicMarketFilter:
     
     def filter_economic_markets(self, kalshi_markets: List[Dict], polymarket_markets: List) -> List[EconomicMarket]:
         """
-        Filter markets to focus on economic/tradfi with short expiry
+        Filter markets for economic events with short expiry
+        Focus on direct arbitrage opportunities only
         """
         economic_markets = []
         
-        logger.info("🔍 Filtering for economic and traditional finance markets...")
+        logger.info("🔍 Filtering for short-term economic event markets...")
         
         # Process Kalshi markets
         for market in kalshi_markets:
             title = market.get('title', market.get('question', ''))
             ticker = market.get('ticker', '')
             
-            category, underlying, tradfi_equiv = self.categorize_market(title, ticker)
+            category, underlying = self.categorize_market(title, ticker)
             
-            if category:  # Only economic/tradfi markets
+            if category:  # Only economic markets
                 expiry_date, days_to_expiry = self.extract_expiry_date(title, ticker)
                 
-                # Focus on short-term markets (≤14 days)
+                # Focus on short-term markets (≤14 days for fast profit)
                 if days_to_expiry <= 14:
                     economic_market = EconomicMarket(
                         platform="Kalshi",
@@ -266,9 +215,8 @@ class EconomicMarketFilter:
                         yes_price=market.get('yes_bid', 0.5),
                         no_price=market.get('no_bid', 0.5),
                         volume_24h=market.get('volume', 0),
-                        tradfi_equivalent=tradfi_equiv,
-                        arbitrage_potential=self._assess_arbitrage_potential(category, days_to_expiry),
-                        notes=f"Expires in {days_to_expiry} days"
+                        arbitrage_priority=self._assess_arbitrage_priority(category, days_to_expiry),
+                        notes=f"Direct arbitrage candidate - expires in {days_to_expiry} days"
                     )
                     
                     economic_markets.append(economic_market)
@@ -280,12 +228,12 @@ class EconomicMarketFilter:
                 
             question = market.question
             
-            category, underlying, tradfi_equiv = self.categorize_market(question)
+            category, underlying = self.categorize_market(question)
             
-            if category:  # Only economic/tradfi markets
+            if category:  # Only economic markets
                 expiry_date, days_to_expiry = self.extract_expiry_date(question)
                 
-                # Focus on short-term markets (≤14 days)
+                # Focus on short-term markets (≤14 days for fast profit)
                 if days_to_expiry <= 14:
                     economic_market = EconomicMarket(
                         platform="Polymarket",
@@ -298,17 +246,16 @@ class EconomicMarketFilter:
                         yes_price=market.yes_token.price,
                         no_price=market.no_token.price,
                         volume_24h=market.volume,
-                        tradfi_equivalent=tradfi_equiv,
-                        arbitrage_potential=self._assess_arbitrage_potential(category, days_to_expiry),
-                        notes=f"Expires in {days_to_expiry} days"
+                        arbitrage_priority=self._assess_arbitrage_priority(category, days_to_expiry),
+                        notes=f"Direct arbitrage candidate - expires in {days_to_expiry} days"
                     )
                     
                     economic_markets.append(economic_market)
         
-        # Sort by days to expiry (shortest first)
-        economic_markets.sort(key=lambda x: x.days_to_expiry)
+        # Sort by days to expiry (shortest first) then by priority
+        economic_markets.sort(key=lambda x: (x.days_to_expiry, x.arbitrage_priority != "HIGH"))
         
-        logger.info(f"📊 Found {len(economic_markets)} economic/tradfi markets ≤14 days")
+        logger.info(f"📊 Found {len(economic_markets)} economic event markets ≤14 days")
         
         # Log summary by category
         categories = {}
@@ -323,173 +270,17 @@ class EconomicMarketFilter:
         
         return economic_markets
     
-    def _assess_arbitrage_potential(self, category: str, days_to_expiry: int) -> str:
-        """Assess cross-asset arbitrage potential"""
-        if category in ['MARKETS', 'YIELDS', 'RATES'] and days_to_expiry <= 7:
-            return "HIGH"
+    def _assess_arbitrage_priority(self, category: str, days_to_expiry: int) -> str:
+        """Assess direct arbitrage priority (removed cross-asset logic)"""
+        # Prioritize short-term, high-volume economic events
+        if category in ['MARKETS', 'RATES'] and days_to_expiry <= 7:
+            return "HIGH"  # SP500/NASDAQ ranges, Fed decisions
         elif category in ['INFLATION', 'EMPLOYMENT'] and days_to_expiry <= 14:
-            return "MEDIUM"
+            return "MEDIUM"  # CPI, jobs data
+        elif days_to_expiry <= 3:
+            return "HIGH"  # Any economic event ≤3 days is high priority
         else:
             return "LOW"
-    
-    def detect_cross_asset_opportunities(self, economic_markets: List[EconomicMarket]) -> List[CrossAssetOpportunity]:
-        """
-        Detect cross-asset arbitrage opportunities
-        Between prediction markets and traditional derivatives
-        """
-        opportunities = []
-        
-        logger.info("🔍 Scanning for cross-asset arbitrage opportunities...")
-        
-        for market in economic_markets:
-            if market.arbitrage_potential == "LOW":
-                continue
-            
-            # Generate cross-asset opportunity based on category
-            opp = self._generate_cross_asset_strategy(market)
-            if opp:
-                opportunities.append(opp)
-        
-        logger.info(f"💰 Found {len(opportunities)} cross-asset opportunities")
-        
-        self.cross_asset_opportunities = opportunities
-        self._save_cross_asset_opportunities()
-        
-        return opportunities
-    
-    def _generate_cross_asset_strategy(self, market: EconomicMarket) -> Optional[CrossAssetOpportunity]:
-        """Generate specific cross-asset strategy for a market"""
-        try:
-            if market.category == "MARKETS":
-                return self._generate_index_arbitrage(market)
-            elif market.category == "RATES":
-                return self._generate_rate_arbitrage(market)
-            elif market.category == "YIELDS":
-                return self._generate_yield_arbitrage(market)
-            else:
-                return None
-                
-        except Exception as e:
-            logger.debug(f"Error generating cross-asset strategy: {e}")
-            return None
-    
-    def _generate_index_arbitrage(self, market: EconomicMarket) -> Optional[CrossAssetOpportunity]:
-        """Generate index arbitrage opportunity (e.g., SPX prediction vs SPX options)"""
-        
-        # Extract strike/level from question
-        question_lower = market.question.lower()
-        
-        # Look for price levels
-        price_match = re.search(r'(\d{4,5})', question_lower)
-        if not price_match:
-            return None
-        
-        strike_level = int(price_match.group(1))
-        
-        # Determine strategy based on prediction market pricing
-        if market.yes_price < 0.3:  # Prediction market thinks unlikely
-            strategy = "LONG_GAMMA"
-            tradfi_action = "BUY CALLS" if "above" in question_lower else "BUY PUTS"
-            confidence = 75.0
-        elif market.yes_price > 0.7:  # Prediction market thinks likely
-            strategy = "SHORT_GAMMA"
-            tradfi_action = "SELL CALLS" if "above" in question_lower else "SELL PUTS"
-            confidence = 70.0
-        else:
-            return None  # Not extreme enough for arbitrage
-        
-        # Estimate profit (simplified)
-        estimated_profit = abs(market.yes_price - 0.5) * 1000  # Rough estimate
-        
-        opp_id = f"CROSS_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(self.cross_asset_opportunities):03d}"
-        
-        return CrossAssetOpportunity(
-            timestamp=datetime.now().isoformat(),
-            opportunity_id=opp_id,
-            prediction_platform=market.platform,
-            prediction_ticker=market.ticker,
-            prediction_question=market.question,
-            prediction_price=market.yes_price,
-            prediction_side="YES",
-            tradfi_instrument=f"{market.underlying_asset} {strike_level} Options",
-            tradfi_action=tradfi_action,
-            tradfi_price="Market Price",
-            strategy_type=strategy,
-            estimated_profit=estimated_profit,
-            confidence_score=confidence,
-            complexity=3,
-            time_to_expiry=market.days_to_expiry,
-            recommendation="ANALYZE" if confidence > 70 else "MONITOR"
-        )
-    
-    def _generate_rate_arbitrage(self, market: EconomicMarket) -> Optional[CrossAssetOpportunity]:
-        """Generate interest rate arbitrage opportunity"""
-        
-        # Rate arbitrage with bond futures
-        if market.yes_price < 0.25:  # Rate hike unlikely
-            tradfi_action = "BUY BOND FUTURES"
-            strategy = "RATE_HEDGE"
-        elif market.yes_price > 0.75:  # Rate hike likely
-            tradfi_action = "SELL BOND FUTURES"
-            strategy = "RATE_HEDGE"
-        else:
-            return None
-        
-        estimated_profit = abs(market.yes_price - 0.5) * 500
-        
-        opp_id = f"CROSS_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(self.cross_asset_opportunities):03d}"
-        
-        return CrossAssetOpportunity(
-            timestamp=datetime.now().isoformat(),
-            opportunity_id=opp_id,
-            prediction_platform=market.platform,
-            prediction_ticker=market.ticker,
-            prediction_question=market.question,
-            prediction_price=market.yes_price,
-            prediction_side="YES",
-            tradfi_instrument="Treasury Futures (ZB/ZN)",
-            tradfi_action=tradfi_action,
-            tradfi_price="Market Price",
-            strategy_type=strategy,
-            estimated_profit=estimated_profit,
-            confidence_score=65.0,
-            complexity=4,
-            time_to_expiry=market.days_to_expiry,
-            recommendation="ANALYZE"
-        )
-    
-    def _generate_yield_arbitrage(self, market: EconomicMarket) -> Optional[CrossAssetOpportunity]:
-        """Generate yield curve arbitrage opportunity"""
-        
-        # Similar to rate arbitrage but focused on yield curve
-        if "invert" in market.question.lower() or "curve" in market.question.lower():
-            strategy = "YIELD_CURVE_ARB"
-            tradfi_action = "YIELD CURVE TRADE"
-        else:
-            return None
-        
-        estimated_profit = abs(market.yes_price - 0.5) * 300
-        
-        opp_id = f"CROSS_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(self.cross_asset_opportunities):03d}"
-        
-        return CrossAssetOpportunity(
-            timestamp=datetime.now().isoformat(),
-            opportunity_id=opp_id,
-            prediction_platform=market.platform,
-            prediction_ticker=market.ticker,
-            prediction_question=market.question,
-            prediction_price=market.yes_price,
-            prediction_side="YES",
-            tradfi_instrument="Yield Curve Spread",
-            tradfi_action=tradfi_action,
-            tradfi_price="Market Price",
-            strategy_type=strategy,
-            estimated_profit=estimated_profit,
-            confidence_score=60.0,
-            complexity=5,
-            time_to_expiry=market.days_to_expiry,
-            recommendation="MONITOR"
-        )
     
     def _save_economic_markets(self):
         """Save economic markets to CSV"""
@@ -501,45 +292,45 @@ class EconomicMarketFilter:
                     row['expiry_date'] = market.expiry_date.isoformat()
                     writer.writerow(row)
     
-    def _save_cross_asset_opportunities(self):
-        """Save cross-asset opportunities to CSV"""
-        with open(self.cross_asset_csv, 'a', newline='') as f:
-            if self.cross_asset_opportunities:
-                writer = csv.DictWriter(f, fieldnames=list(CrossAssetOpportunity.__annotations__.keys()))
-                for opp in self.cross_asset_opportunities:
-                    writer.writerow(asdict(opp))
-    
     def get_summary(self) -> Dict:
-        """Get summary of economic markets and cross-asset opportunities"""
+        """Get summary of economic markets for direct arbitrage"""
         economic_by_category = {}
         for market in self.economic_markets:
             economic_by_category[market.category] = economic_by_category.get(market.category, 0) + 1
         
-        cross_asset_by_strategy = {}
-        for opp in self.cross_asset_opportunities:
-            cross_asset_by_strategy[opp.strategy_type] = cross_asset_by_strategy.get(opp.strategy_type, 0) + 1
+        priority_counts = {}
+        for market in self.economic_markets:
+            priority_counts[market.arbitrage_priority] = priority_counts.get(market.arbitrage_priority, 0) + 1
         
         return {
             'total_economic_markets': len(self.economic_markets),
             'economic_by_category': economic_by_category,
-            'total_cross_asset_opportunities': len(self.cross_asset_opportunities),
-            'cross_asset_by_strategy': cross_asset_by_strategy,
-            'high_potential_count': len([m for m in self.economic_markets if m.arbitrage_potential == "HIGH"]),
+            'priority_breakdown': priority_counts,
+            'high_priority_count': len([m for m in self.economic_markets if m.arbitrage_priority == "HIGH"]),
             'short_term_count': len([m for m in self.economic_markets if m.days_to_expiry <= 7])
         }
 
-# Test the economic filter
+# Test the simplified economic filter
 async def test_economic_filter():
-    """Test the economic market filter"""
-    print("🧪 Testing Economic Market Filter...")
+    """Test the simplified economic market filter"""
+    print("🧪 Testing Simplified Economic Market Filter...")
     
     try:
         import sys
         sys.path.append('./data_collectors')
-        sys.path.append('./arbitrage')
         
-        from kalshi_client import KalshiClient
-        from polymarket_client_enhanced import EnhancedPolymarketClient
+        # Robust imports
+        try:
+            from kalshi_client import KalshiClient
+        except ImportError:
+            sys.path.append('./data_collectors')
+            from kalshi_client import KalshiClient
+            
+        try:
+            from polymarket_client_enhanced import EnhancedPolymarketClient
+        except ImportError:
+            sys.path.append('./data_collectors')
+            from polymarket_client_enhanced import EnhancedPolymarketClient
         
         # Get markets
         kalshi = KalshiClient()
@@ -548,7 +339,7 @@ async def test_economic_filter():
         async with EnhancedPolymarketClient() as poly_client:
             polymarket_markets = await poly_client.get_active_markets_with_pricing(limit=50)
         
-        # Filter for economic markets
+        # Filter for economic markets (no cross-asset)
         filter_system = EconomicMarketFilter()
         economic_markets = filter_system.filter_economic_markets(kalshi_markets, polymarket_markets)
         
@@ -567,26 +358,17 @@ async def test_economic_filter():
             for market in markets[:2]:  # Show top 2 per category
                 print(f"   • {market.question[:60]}...")
                 print(f"     Platform: {market.platform} | Expires: {market.days_to_expiry} days")
-                print(f"     TradFi Equivalent: {market.tradfi_equivalent}")
-        
-        # Detect cross-asset opportunities
-        cross_asset_opps = filter_system.detect_cross_asset_opportunities(economic_markets)
-        
-        print(f"\\n💰 Cross-Asset Opportunities: {len(cross_asset_opps)}")
-        for opp in cross_asset_opps[:3]:  # Show top 3
-            print(f"   • {opp.strategy_type}: {opp.prediction_question[:50]}...")
-            print(f"     TradFi Action: {opp.tradfi_action}")
-            print(f"     Estimated Profit: ${opp.estimated_profit:.0f}")
+                print(f"     Priority: {market.arbitrage_priority}")
         
         # Summary
         summary = filter_system.get_summary()
         print(f"\\n📈 Summary:")
-        print(f"   High Potential Markets: {summary['high_potential_count']}")
+        print(f"   High Priority Markets: {summary['high_priority_count']}")
         print(f"   Short-term (≤7 days): {summary['short_term_count']}")
+        print(f"   Priority Breakdown: {summary['priority_breakdown']}")
         
-        print(f"\\n📁 Data saved to:")
-        print(f"   Economic Markets: {filter_system.economic_csv}")
-        print(f"   Cross-Asset Opportunities: {filter_system.cross_asset_csv}")
+        print(f"\\n📁 Data saved to: {filter_system.economic_csv}")
+        print("✅ Ready for direct event contract arbitrage!")
         
         return True
         

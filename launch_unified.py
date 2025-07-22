@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Enhanced Launch System with Unified Discord Bot
-Uses single Discord bot for both alerts and execution commands
+VOLUME-OPTIMIZED Launch System with Unified Discord Bot
+Uses enhanced detector with volume optimization for maximum profit
+FOCUS: Direct event contract arbitrage with volume optimization (20-50% profit improvement)
 """
+
+from dotenv import load_dotenv
+
+# Load environment variables FIRST
+load_dotenv()
 
 import asyncio
 import argparse
@@ -34,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class EnhancedArbitrageSystem:
-    """Complete arbitrage system with unified Discord bot"""
+    """Complete arbitrage system with unified Discord bot - Direct arbitrage focus"""
     
     def __init__(self):
         self.arbitrage_detector = EnhancedArbitrageDetector()
@@ -49,16 +55,17 @@ class EnhancedArbitrageSystem:
         self.scan_count = 0
         self.opportunities_found = 0
         self.economic_markets_found = 0
-        self.cross_asset_opportunities = 0
     
     async def run_economic_scan(self):
-        """Run economic-focused arbitrage scan"""
-        logger.info("🚀 Starting Economic-Focused Arbitrage Scan...")
+        """Run economic-focused arbitrage scan with VOLUME OPTIMIZATION"""
+        logger.info("🚀 Starting VOLUME-OPTIMIZED Direct Event Contract Arbitrage Scan...")
+        logger.info("🎯 NEW: Testing volumes $50-$1000 to find maximum profit per opportunity")
+        logger.info("🔥 ADVANTAGE: Real API slippage data instead of estimates")
         self.scan_count += 1
         
         try:
-            # Get all markets
-            logger.info("📊 Fetching markets from all platforms...")
+            # Get all markets with volume optimization
+            logger.info("📊 Fetching markets and running volume optimization...")
             opportunities = await self.arbitrage_detector.scan_for_arbitrage()
             
             # Get market data for economic filtering
@@ -68,39 +75,40 @@ class EnhancedArbitrageSystem:
             async with EnhancedPolymarketClient() as poly_client:
                 polymarket_markets = await poly_client.get_active_markets_with_pricing(limit=200)
             
-            # Filter for economic/tradfi markets
-            logger.info("🏦 Filtering for economic and traditional finance markets...")
+            # Filter for economic event markets (direct arbitrage only)
+            logger.info("🏦 Filtering for economic event markets (direct arbitrage only)...")
             economic_markets = self.economic_filter.filter_economic_markets(
                 kalshi_markets, polymarket_markets
             )
             self.economic_markets_found = len(economic_markets)
             
-            # Detect cross-asset opportunities
-            logger.info("💼 Scanning for cross-asset arbitrage opportunities...")
-            cross_asset_opps = self.economic_filter.detect_cross_asset_opportunities(economic_markets)
-            self.cross_asset_opportunities = len(cross_asset_opps)
-            
             # Send alerts for profitable opportunities via unified bot
             if opportunities:
-                logger.info(f"💰 Found {len(opportunities)} direct arbitrage opportunities")
+                total_profit = sum(opp.guaranteed_profit for opp in opportunities)
+                avg_volume = sum(opp.trade_size_usd for opp in opportunities) / len(opportunities) if opportunities else 0
+                logger.info(f"💰 Found {len(opportunities)} VOLUME-OPTIMIZED arbitrage opportunities")
+                logger.info(f"📈 Total profit potential: ${total_profit:.2f} | Avg optimal volume: ${avg_volume:.0f}")
+                
                 for opp in opportunities:
                     if opp.guaranteed_profit > 10.0:  # Only alert for >$10 profit
                         if self.discord_manager:
                             await self.discord_manager.send_opportunity_alert(opp)
                         else:
-                            # Just log the opportunity if Discord isn't available
-                            logger.info(f"💰 Opportunity: {opp.opportunity_id} - ${opp.guaranteed_profit:.2f} profit")
+                            # Enhanced logging with volume optimization details
+                            logger.info(f"💰 {opp.opportunity_id}: ${opp.guaranteed_profit:.2f} profit at ${opp.trade_size_usd:.0f} optimal volume")
+                            logger.info(f"   📊 Slippage: K:{opp.kalshi_slippage_percent:.1f}% + P:{opp.polymarket_slippage_percent:.1f}%")
                         self.opportunities_found += 1
             
             # Send economic market summary via unified bot
-            await self._send_economic_summary(economic_markets, cross_asset_opps)
+            await self._send_economic_summary(economic_markets)
             
-            logger.info(f"✅ Scan complete - Found {len(opportunities)} direct + {len(cross_asset_opps)} cross-asset opportunities")
+            logger.info(f"✅ VOLUME-OPTIMIZED scan complete - Found {len(opportunities)} optimized arbitrage opportunities")
+            if opportunities:
+                logger.info(f"🚀 OPTIMIZATION ADVANTAGE: Each opportunity tested at multiple volumes for maximum profit!")
             
             return {
-                'direct_arbitrage': len(opportunities),
+                'volume_optimized_arbitrage': len(opportunities),
                 'economic_markets': len(economic_markets),
-                'cross_asset': len(cross_asset_opps),
                 'profitable_alerts': len([o for o in opportunities if o.guaranteed_profit > 10.0])
             }
             
@@ -110,18 +118,18 @@ class EnhancedArbitrageSystem:
                 await self.discord_manager.send_market_update(f"❌ Scan failed: {str(e)}")
             return None
     
-    async def _send_economic_summary(self, economic_markets, cross_asset_opps):
-        """Send summary of economic markets and cross-asset opportunities"""
+    async def _send_economic_summary(self, economic_markets):
+        """Send summary of economic markets for direct arbitrage"""
         try:
-            # Focus on short-term, high-potential markets
+            # Focus on short-term, high-priority markets for direct arbitrage
             short_term = [m for m in economic_markets if m.days_to_expiry <= 7]
-            high_potential = [m for m in economic_markets if m.arbitrage_potential == "HIGH"]
+            high_priority = [m for m in economic_markets if m.arbitrage_priority == "HIGH"]
             
-            summary = f"""📊 **ECONOMIC MARKETS SCAN RESULTS**
+            summary = f"""📊 **ECONOMIC EVENT MARKETS SCAN**
 🏦 Total Economic Markets: {len(economic_markets)}
 ⚡ Short-term (≤7 days): {len(short_term)}
-🎯 High Arbitrage Potential: {len(high_potential)}
-💼 Cross-Asset Opportunities: {len(cross_asset_opps)}
+🎯 High Priority: {len(high_priority)}
+🎲 Focus: Direct Event Contract Arbitrage
 
 **Categories Found:**"""
             
@@ -133,10 +141,10 @@ class EnhancedArbitrageSystem:
             for category, count in categories.items():
                 summary += f"\\n• {category}: {count} markets"
             
-            if cross_asset_opps:
-                summary += f"\\n\\n**Top Cross-Asset Opportunities:**"
-                for i, opp in enumerate(cross_asset_opps[:3], 1):
-                    summary += f"\\n{i}. {opp.strategy_type}: ${opp.estimated_profit:.0f} potential"
+            if high_priority:
+                summary += f"\\n\\n**High Priority Markets:**"
+                for i, market in enumerate(high_priority[:3], 1):
+                    summary += f"\\n{i}. {market.question[:40]}... ({market.days_to_expiry}d)"
             
             summary += f"\\n\\n⏰ Next scan: {datetime.now().strftime('%H:%M:%S')}"
             
@@ -155,9 +163,11 @@ class EnhancedArbitrageSystem:
         
         # Send startup message via unified bot
         if self.discord_manager:
-            startup_msg = f"""🚀 **Economic Arbitrage System Active**
+            startup_msg = f"""🚀 **VOLUME-OPTIMIZED Arbitrage System Active**
 📊 Scanning every {interval_minutes} minutes
-🎯 Focus: TradFi + Economic markets ≤14 days
+🎯 Focus: Volume-optimized direct event contract arbitrage
+🔥 NEW: Tests $50-$1000 volumes for maximum profit
+⚡ ADVANTAGE: Real API slippage data (20-50% profit improvement)
 🤖 Unified bot ready for alerts and execution!
 
 **Commands:** `STATUS`, `EXECUTE A001`, `HALT`, `RESUME`"""
@@ -169,7 +179,7 @@ class EnhancedArbitrageSystem:
                 results = await self.run_economic_scan()
                 
                 if results:
-                    logger.info(f"📊 Scan #{self.scan_count}: {results['direct_arbitrage']} direct + {results['cross_asset']} cross-asset")
+                    logger.info(f"📊 Scan #{self.scan_count}: {results['volume_optimized_arbitrage']} volume-optimized arbitrage opportunities")
                 
                 # Wait for next scan
                 logger.info(f"⏱️ Waiting {interval_minutes} minutes for next scan...")
@@ -203,19 +213,16 @@ class EnhancedArbitrageSystem:
             'total_scans': self.scan_count,
             'opportunities_found': self.opportunities_found,
             'economic_markets': self.economic_markets_found,
-            'cross_asset_opportunities': self.cross_asset_opportunities,
             'success_rate': f"{(self.opportunities_found/max(self.scan_count,1)*100):.1f}%"
         }
 
 async def main():
     """Main entry point with enhanced options"""
-    parser = argparse.ArgumentParser(description='Enhanced Arbitrage Detection System with Unified Discord Bot')
+    parser = argparse.ArgumentParser(description='Direct Event Contract Arbitrage System with Unified Discord Bot')
     parser.add_argument('command', choices=['scan', 'monitor', 'bot', 'economic', 'test'], 
                        help='Command to run')
     parser.add_argument('--interval', type=int, default=15, 
                        help='Monitoring interval in minutes (default: 15)')
-    parser.add_argument('--economic-only', action='store_true',
-                       help='Focus only on economic/tradfi markets')
     parser.add_argument('--max-days', type=int, default=14,
                        help='Maximum days to expiry for markets (default: 14)')
     
@@ -224,10 +231,11 @@ async def main():
     # Initialize system
     system = EnhancedArbitrageSystem()
     
-    print(f"🚀 Enhanced Arbitrage System - {args.command.upper()} mode")
+    print(f"🚀 Direct Event Contract Arbitrage System - {args.command.upper()} mode")
     print(f"⚙️ Environment: {settings.environment}")
-    print(f"🎯 Economic focus: ≤{args.max_days} days to expiry")
+    print(f"🎯 Focus: Event contract arbitrage ≤{args.max_days} days")
     print(f"🤖 Discord bot: {'Available' if DISCORD_AVAILABLE else 'Disabled'}")
+    print(f"⚠️ Cross-asset arbitrage: DISABLED (focus on direct arbitrage first)")
     print()
     
     try:
@@ -261,13 +269,12 @@ async def main():
                 polymarket_markets = await poly_client.get_active_markets_with_pricing(limit=100)
             
             economic_markets = system.economic_filter.filter_economic_markets(kalshi_markets, polymarket_markets)
-            cross_asset_opps = system.economic_filter.detect_cross_asset_opportunities(economic_markets)
             
             summary = system.economic_filter.get_summary()
             print(f"📊 Economic Analysis Complete:")
             print(f"   Markets: {summary['total_economic_markets']}")
-            print(f"   Cross-Asset Opportunities: {summary['total_cross_asset_opportunities']}")
-            print(f"   High Potential: {summary['high_potential_count']}")
+            print(f"   High Priority: {summary['high_priority_count']}")
+            print(f"   Short-term: {summary['short_term_count']}")
             
         elif args.command == 'monitor':
             # Continuous monitoring

@@ -5,6 +5,11 @@ Sends alerts AND listens for execution commands
 Replaces both webhook and separate bot functionality
 """
 
+from dotenv import load_dotenv
+
+# Load environment variables FIRST
+load_dotenv()
+
 try:
     import discord
     from discord.ext import commands
@@ -40,10 +45,11 @@ class UnifiedArbitrageBot(commands.Bot if DISCORD_AVAILABLE else object):
         if not DISCORD_AVAILABLE:
             return
         
-        # Set up bot with message intents
+        # Set up bot with message intents (now enabled in Discord!)
         intents = discord.Intents.default()
-        intents.message_content = True
+        intents.message_content = True  # Now enabled in Discord Portal
         intents.guilds = True
+        intents.guild_messages = True
         
         super().__init__(
             command_prefix='!',  # For slash commands if needed
