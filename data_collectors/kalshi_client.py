@@ -21,7 +21,15 @@ class KalshiClient:
         load_dotenv()
         
         self.api_key_id = os.getenv('KALSHI_API_KEY_ID')
-        self.base_url = "https://demo-api.kalshi.co/trade-api/v2"
+        
+        # Use environment setting from .env
+        environment = os.getenv('ENVIRONMENT', 'DEMO').upper()
+        if environment == 'PRODUCTION':
+            self.base_url = "https://trading-api.kalshi.co/trade-api/v2"
+            print("🎯 Using PRODUCTION Kalshi API")
+        else:
+            self.base_url = "https://demo-api.kalshi.co/trade-api/v2"
+            print("🎯 Using DEMO Kalshi API (will filter test contracts)")
         
         self.private_key = None
         self.session = requests.Session()
@@ -167,21 +175,52 @@ class KalshiClient:
             print(f"❌ Request error: {e}")
             return None
     
-    def get_markets(self) -> List[Dict]:
-        """Get all active markets from Kalshi"""
+    def get_markets(self, limit_per_page: int = 1000) -> List[Dict]:
+        """Get ALL active markets from Kalshi using pagination"""
         try:
-            response = self._make_authenticated_request("GET", "/markets")
+            all_markets = []
+            cursor = None
+            page = 1
             
-            if response and 'markets' in response:
-                markets = response['markets']
-                print(f"📊 Fetched {len(markets)} markets from Kalshi")
-                return markets
-            else:
-                print("⚠️ No markets data in response")
-                return []
+            print(f"🔍 Fetching ALL Kalshi markets with pagination...")
+            
+            while True:
+                # Build endpoint with pagination parameters
+                endpoint = f"/markets?limit={limit_per_page}"
+                if cursor:
+                    endpoint += f"&cursor={cursor}"
                 
+                print(f"📡 Page {page}: Fetching up to {limit_per_page} markets...")
+                response = self._make_authenticated_request("GET", endpoint)
+                
+                if not response or 'markets' not in response:
+                    print(f"⚠️ No markets data in response for page {page}")
+                    break
+                
+                page_markets = response['markets']
+                all_markets.extend(page_markets)
+                
+                print(f"✅ Page {page}: Got {len(page_markets)} markets")
+                print(f"📊 Total so far: {len(all_markets)} markets")
+                
+                # Check if there are more pages
+                cursor = response.get('cursor')
+                if not cursor or len(page_markets) < limit_per_page:
+                    print(f"🏁 Reached end of data (no more cursor or small page)")
+                    break
+                
+                page += 1
+                
+                # Safety break to avoid infinite loops
+                if page > 50:  # Max 50 pages = 50,000 markets
+                    print(f"⚠️ Safety break at page {page}")
+                    break
+            
+            print(f"🎉 TOTAL KALSHI MARKETS FETCHED: {len(all_markets)}")
+            return all_markets
+            
         except Exception as e:
-            print(f"❌ Error fetching markets: {e}")
+            print(f"❌ Error fetching markets with pagination: {e}")
             return []
     
 def place_order(self, ticker: str, side: str, action: str, count: int, 

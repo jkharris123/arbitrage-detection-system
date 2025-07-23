@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-SIMPLIFIED Polymarket Client - Just Get Pricing Working
-Focus: Get ANY markets with pricing data (even if basic)
-Based on the working code pattern from the user's paste
+ENHANCED Polymarket Client - Get THOUSANDS of contracts
+Focus: Maximum contract coverage with proper pagination
 """
 
 import asyncio
@@ -31,7 +30,7 @@ class PolymarketToken:
 
 @dataclass
 class PolymarketMarket:
-    """Simplified Polymarket market with basic pricing"""
+    """Enhanced Polymarket market with basic pricing"""
     condition_id: str
     question: str
     description: str
@@ -60,7 +59,7 @@ class PolymarketMarket:
 
 class EnhancedPolymarketClient:
     """
-    SIMPLIFIED Polymarket client - just get pricing working
+    ENHANCED Polymarket client - get THOUSANDS of contracts
     """
     
     def __init__(self):
@@ -78,53 +77,95 @@ class EnhancedPolymarketClient:
         if self.session:
             await self.session.close()
     
-    async def get_active_markets_with_pricing(self, limit: int = 100) -> List[PolymarketMarket]:
+    async def get_active_markets_with_pricing(self, limit: int = 2000) -> List[PolymarketMarket]:
         """
-        SIMPLIFIED: Get markets with basic pricing
-        Strategy: Get markets from Gamma, add simple pricing for ALL markets
+        ENHANCED: Get THOUSANDS of markets with basic pricing
+        Strategy: Multiple API calls with large limits + pagination
         """
         try:
-            # Step 1: Get markets from Gamma API
-            logger.info(f"🔍 Fetching markets from Gamma API...")
-            url = f"{self.gamma_url}/markets"
-            params = {
-                'limit': limit,
-                'offset': 0,
-                'active': 'true',
-                'closed': 'false'
-            }
+            all_markets = []
             
-            async with self.session.get(url, params=params) as response:
-                if response.status != 200:
-                    logger.error(f"❌ Gamma API failed: {response.status}")
-                    return []
-                
-                data = await response.json()
-                
-                # Handle API response format
-                if isinstance(data, list):
-                    market_list = data
-                elif isinstance(data, dict) and 'data' in data:
-                    market_list = data['data']
-                else:
-                    market_list = data.get('markets', [])
-                
-                logger.info(f"📊 Got {len(market_list)} raw markets from Gamma")
-                
-                if not market_list:
-                    logger.warning("⚠️ No markets returned from Gamma API")
-                    return []
+            # Step 1: Try multiple large requests to get maximum coverage
+            logger.info(f"🔍 Fetching MAXIMUM Polymarket markets...")
             
-            # Step 2: Try to get SOME pricing data from CLOB
+            # Multiple approaches to get maximum contracts
+            approaches = [
+                {'limit': 2000, 'offset': 0},
+                {'limit': 1000, 'offset': 0}, 
+                {'limit': 500, 'offset': 0},
+                {'limit': 500, 'offset': 500},
+                {'limit': 500, 'offset': 1000},
+                {'limit': 500, 'offset': 1500}
+            ]
+            
+            seen_condition_ids = set()
+            
+            for i, params in enumerate(approaches, 1):
+                try:
+                    logger.info(f"📡 Approach {i}: limit={params['limit']}, offset={params['offset']}")
+                    
+                    url = f"{self.gamma_url}/markets"
+                    api_params = {
+                        'limit': params['limit'],
+                        'offset': params['offset'],
+                        'active': 'true',
+                        'closed': 'false'
+                    }
+                    
+                    async with self.session.get(url, params=api_params) as response:
+                        if response.status != 200:
+                            logger.warning(f"⚠️ Approach {i} failed: {response.status}")
+                            continue
+                        
+                        data = await response.json()
+                        
+                        # Handle API response format
+                        if isinstance(data, list):
+                            market_list = data
+                        elif isinstance(data, dict) and 'data' in data:
+                            market_list = data['data']
+                        else:
+                            market_list = data.get('markets', [])
+                        
+                        logger.info(f"✅ Approach {i}: Got {len(market_list)} raw markets")
+                        
+                        # Deduplicate and add to all_markets
+                        new_markets = 0
+                        for market in market_list:
+                            condition_id = market.get('conditionId', '')
+                            if condition_id and condition_id not in seen_condition_ids:
+                                seen_condition_ids.add(condition_id)
+                                all_markets.append(market)
+                                new_markets += 1
+                        
+                        logger.info(f"📊 Approach {i}: Added {new_markets} new unique markets")
+                        logger.info(f"📊 Total unique markets so far: {len(all_markets)}")
+                        
+                        # If we got fewer than requested, we've hit the end
+                        if len(market_list) < params['limit']:
+                            logger.info(f"🏁 Approach {i}: Reached end of data")
+                
+                except Exception as e:
+                    logger.warning(f"⚠️ Approach {i} error: {e}")
+                    continue
+            
+            logger.info(f"🎉 TOTAL UNIQUE POLYMARKET MARKETS: {len(all_markets)}")
+            
+            if not all_markets:
+                logger.warning("⚠️ No markets returned from ANY approach")
+                return []
+            
+            # Step 2: Get CLOB pricing data
             logger.info(f"🔍 Fetching CLOB markets for pricing...")
             clob_markets = await self._get_clob_markets()
             logger.info(f"📊 Got {len(clob_markets)} markets from CLOB")
             
-            # Step 3: Process markets and ADD PRICING TO ALL
+            # Step 3: Process ALL markets and add pricing
+            logger.info(f"🔍 Processing {len(all_markets)} markets and adding pricing...")
             markets_with_pricing = []
             processed_count = 0
             
-            for i, raw_market in enumerate(market_list):
+            for i, raw_market in enumerate(all_markets):
                 try:
                     condition_id = raw_market.get('conditionId', '')
                     if not condition_id:
@@ -148,6 +189,10 @@ class EnhancedPolymarketClient:
                     if pricing_added:
                         markets_with_pricing.append(market)
                         processed_count += 1
+                        
+                        # Log progress
+                        if processed_count % 500 == 0:
+                            logger.info(f"📊 Processed {processed_count} markets with pricing...")
                         
                         # Log first few for debugging
                         if processed_count <= 3:
@@ -200,7 +245,6 @@ class EnhancedPolymarketClient:
                     return True
             
             # Fallback: Create reasonable pricing for this specific market
-            # Use market volume and question to estimate reasonable pricing
             yes_price, no_price = self._generate_realistic_pricing(market)
             
             market.yes_token = PolymarketToken(
@@ -355,26 +399,7 @@ class EnhancedPolymarketClient:
         return price, 0.02  # 2% slippage
     
     async def get_execution_prices_for_volumes(self, token_id: str, side: str, volumes_usd: List[float]) -> List[Dict]:
-        """
-        Get execution prices for different volume levels - CORE OPTIMIZATION FEATURE
-        This is the key advantage - real slippage data instead of estimation!
-        
-        Args:
-            token_id: Polymarket token ID
-            side: 'buy' or 'sell'
-            volumes_usd: List of trade sizes in USD to test
-            
-        Returns:
-            List of execution data for each volume:
-            {
-                'volume_usd': float,
-                'execution_price': float, 
-                'slippage_percent': float,
-                'gas_cost_usd': float,
-                'total_cost_usd': float,
-                'tokens_received': float
-            }
-        """
+        """Get execution prices for different volume levels"""
         try:
             execution_data = []
             
@@ -431,28 +456,8 @@ class EnhancedPolymarketClient:
             # Return fallback data
             return self._estimate_execution_prices_for_volumes(volumes_usd, side)
     
-    async def calculate_trade_costs(self, token_id: str, size_usdc: float, side: str) -> Dict[str, float]:
-        """Calculate trade costs (compatibility method)"""
-        volumes = [size_usdc]
-        execution_data = await self.get_execution_prices_for_volumes(token_id, side, volumes)
-        if execution_data:
-            return execution_data[0]
-        else:
-            # Fallback
-            return {
-                'volume_usd': size_usdc,
-                'execution_price': 0.50,
-                'slippage_percent': 2.0,
-                'gas_cost_usd': 2.0,
-                'total_cost_usd': size_usdc + 2.0,
-                'tokens_received': size_usdc / 0.50
-            }
-    
     def _estimate_execution_prices_for_volumes(self, volumes_usd: List[float], side: str) -> List[Dict]:
-        """
-        Fallback: Estimate execution prices when API data unavailable
-        Uses realistic slippage model based on volume
-        """
+        """Fallback: Estimate execution prices when API data unavailable"""
         execution_data = []
         base_price = 0.50
         
@@ -492,15 +497,15 @@ class EnhancedPolymarketClient:
         """Estimate gas cost"""
         return 2.0
 
-# Test the simplified client
-async def test_simplified_client():
-    """Test the simplified Polymarket client"""
-    print("🚀 Testing SIMPLIFIED Polymarket Client...")
-    print("Goal: Get ANY markets with pricing data working")
+# Test the enhanced client
+async def test_enhanced_client():
+    """Test the enhanced Polymarket client"""
+    print("🚀 Testing ENHANCED Polymarket Client...")
+    print("Goal: Get THOUSANDS of markets with pricing")
     
     async with EnhancedPolymarketClient() as client:
-        print("\n📊 Fetching markets with simplified pricing approach...")
-        markets = await client.get_active_markets_with_pricing(limit=10)
+        print("\n📊 Fetching markets with enhanced approach...")
+        markets = await client.get_active_markets_with_pricing(limit=2000)
         
         print(f"\n📊 Results:")
         print(f"   Total markets: {len(markets)}")
@@ -512,18 +517,15 @@ async def test_simplified_client():
             print("\n✅ SUCCESS! Got markets with pricing!")
             print("\n📋 Sample markets:")
             
-            for i, market in enumerate(markets_with_pricing[:3], 1):
+            for i, market in enumerate(markets_with_pricing[:5], 1):
                 print(f"   {i}. {market.question[:50]}...")
                 print(f"      YES: ${market.yes_token.price:.3f} | NO: ${market.no_token.price:.3f}")
                 print(f"      Volume: ${market.volume:.0f}")
-                print(f"      Has Pricing: {market.has_pricing}")
             
             return True
         else:
             print("\n❌ Still no pricing data")
-            if markets:
-                print(f"Debug: Got {len(markets)} markets but none have pricing")
             return False
 
 if __name__ == "__main__":
-    asyncio.run(test_simplified_client())
+    asyncio.run(test_enhanced_client())
