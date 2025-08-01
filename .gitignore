@@ -1,29 +1,48 @@
-cat > .gitignore << 'EOF'
-# Virtual environment
-arbitrage_env/
-venv/
-.venv/
-env/
-
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Secrets
-kalshi-private-key.pem
-.env
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-logs/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+arbitrage_env/
+.venv
 
 # IDE
 .vscode/
 .idea/
-EOF
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+.env
+keys/*.pem
+keys/*.key
+output/*.csv
+output/*.txt
+output/*.json
+logs/*.log
+.trash/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Documentation
+docs/_build/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+.claude/
+
+# API outputs
+manual_matches.csv
+output/opportunities/
+output/live_test_*.csv

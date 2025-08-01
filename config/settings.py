@@ -66,8 +66,13 @@ class Settings:
                 'private_key_path': os.getenv('KALSHI_PRIVATE_KEY_FILE', 'kalshi-private-key.pem'),
                 'rate_limit_per_minute': 50
             }
-        else:  # PAPER - use demo for now
-            return self._get_kalshi_credentials()
+        else:  # PAPER - use demo settings
+            return {
+                'base_url': 'https://demo-api.kalshi.co/trade-api/v2',
+                'api_key_id': os.getenv('KALSHI_API_KEY_ID'),
+                'private_key_path': os.getenv('KALSHI_PRIVATE_KEY_FILE', 'kalshi-demo-private-key.pem'),
+                'rate_limit_per_minute': 100  # More lenient for demo
+            }
     
     def _get_ibkr_credentials(self) -> Dict[str, Any]:
         """Get IBKR credentials based on environment"""

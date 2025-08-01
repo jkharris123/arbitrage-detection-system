@@ -1,0 +1,23 @@
+# Arbitrage Bot Requirements
+
+# Core dependencies
+python-dotenv>=1.0.0
+requests>=2.31.0
+aiohttp>=3.9.0
+asyncio>=3.4.3
+pandas>=2.0.0
+
+# API clients
+openai>=0.28.0  # For ChatGPT matching
+discord.py>=2.3.0  # For Discord alerts
+
+# Data processing
+numpy>=1.24.0
+python-dateutil>=2.8.0
+
+# Scheduling
+APScheduler>=3.10.0
+
+# Optional but recommended
+colorama>=0.4.6  # For colored terminal output
+tabulate>=0.9.0  # For nice table formatting
