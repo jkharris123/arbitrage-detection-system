@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-ENHANCED Polymarket Client - Get THOUSANDS of contracts
-Focus: Maximum contract coverage with proper pagination
+ENHANCED Polymarket Client - Using GAMMA API for market discovery
+CLOB API will be used only for order placement
+Focus: Get truly OPEN markets that can be traded
 """
 
 import asyncio
@@ -44,6 +45,7 @@ class PolymarketMarket:
     # Essential fields for arbitrage detection
     yes_token: Optional[PolymarketToken] = None
     no_token: Optional[PolymarketToken] = None
+    days_to_expiry: Optional[float] = None  # Added for date filtering
     
     @property
     def has_pricing(self) -> bool:
@@ -69,7 +71,8 @@ class PolymarketMarket:
 
 class EnhancedPolymarketClient:
     """
-    ENHANCED Polymarket client - get THOUSANDS of contracts
+    ENHANCED Polymarket client using GAMMA API for market discovery
+    CLOB API is reserved for order placement only
     """
     
     def __init__(self):
@@ -89,132 +92,53 @@ class EnhancedPolymarketClient:
     
     async def get_active_markets_with_pricing(self, limit: int = 2000) -> List[PolymarketMarket]:
         """
-        ENHANCED: Get ALL markets with proper pagination
-        Strategy: Paginate through all available markets with 100 per page
+        Get ALL markets using ONLY Gamma API (CLOB filters are broken)
         """
         try:
-            all_markets = []
-            seen_condition_ids = set()
+            logger.info(f"🔍 Fetching Polymarket markets from Gamma API...")
             
-            logger.info(f"🔍 Fetching ALL Polymarket markets with pagination...")
+            # Use ONLY gamma API - CLOB filters don't work
+            all_gamma_markets = await self._get_all_gamma_markets(limit)
+            logger.info(f"📊 Got {len(all_gamma_markets)} markets from gamma")
             
-            # Paginate through all markets (100 per page is API limit)
-            offset = 0
-            page_size = 100
-            total_pages = 0
-            
-            while offset < limit:
-                try:
-                    total_pages += 1
-                    logger.info(f"📡 Page {total_pages}: Fetching markets {offset}-{offset+page_size}...")
-                    
-                    url = f"{self.gamma_url}/markets"
-                    api_params = {
-                        'limit': page_size,
-                        'offset': offset,
-                        'active': 'true',
-                        'closed': 'false'
-                    }
-                    
-                    async with self.session.get(url, params=api_params) as response:
-                        if response.status != 200:
-                            logger.warning(f"⚠️ Page {total_pages} failed: {response.status}")
-                            break
-                        
-                        data = await response.json()
-                        
-                        # Handle API response format
-                        if isinstance(data, list):
-                            market_list = data
-                        elif isinstance(data, dict) and 'data' in data:
-                            market_list = data['data']
-                        else:
-                            market_list = data.get('markets', [])
-                        
-                        if not market_list:
-                            logger.info(f"🏁 No more markets at offset {offset}")
-                            break
-                        
-                        # Deduplicate and add to all_markets
-                        new_markets = 0
-                        for market in market_list:
-                            condition_id = market.get('conditionId', '')
-                            if condition_id and condition_id not in seen_condition_ids:
-                                seen_condition_ids.add(condition_id)
-                                all_markets.append(market)
-                                new_markets += 1
-                        
-                        logger.info(f"📊 Page {total_pages}: Got {len(market_list)} markets, {new_markets} new unique")
-                        
-                        # If we got fewer than page_size, we've hit the end
-                        if len(market_list) < page_size:
-                            logger.info(f"🏁 Reached end of markets")
-                            break
-                        
-                        # Move to next page
-                        offset += page_size
-                        
-                        # Small delay to be nice to the API
-                        await asyncio.sleep(0.1)
-                
-                except Exception as e:
-                    logger.warning(f"⚠️ Page {total_pages} error: {e}")
-                    break
-            
-            logger.info(f"🎉 TOTAL UNIQUE POLYMARKET MARKETS: {len(all_markets)}")
-            
-            if not all_markets:
-                logger.warning("⚠️ No markets returned from ANY approach")
-                return []
-            
-            # Step 2: Get CLOB pricing data
-            logger.info(f"🔍 Fetching CLOB markets for pricing...")
-            clob_markets = await self._get_clob_markets()
-            logger.info(f"📊 Got {len(clob_markets)} markets from CLOB")
-            
-            # Step 3: Process ALL markets and add pricing
-            logger.info(f"🔍 Processing {len(all_markets)} markets and adding pricing...")
+            # Process markets into our format
             markets_with_pricing = []
-            processed_count = 0
+            now = datetime.now(timezone.utc)
             
-            for i, raw_market in enumerate(all_markets):
+            for i, market_data in enumerate(all_gamma_markets):
                 try:
-                    condition_id = raw_market.get('conditionId', '')
-                    if not condition_id:
-                        continue
+                    # Convert gamma format to our format
+                    market = self._gamma_market_to_polymarket(market_data)
                     
-                    # Create basic market structure
-                    market = PolymarketMarket(
-                        condition_id=condition_id,
-                        question=raw_market.get('question', ''),
-                        description=raw_market.get('description', ''),
-                        end_date=raw_market.get('endDate', ''),
-                        yes_token_id=f"{condition_id}_YES",
-                        no_token_id=f"{condition_id}_NO",
-                        category=raw_market.get('events', ['Unknown'])[0] if raw_market.get('events') else 'Unknown',
-                        volume=float(raw_market.get('volume24hrClob', 0))
-                    )
-                    
-                    # ALWAYS add pricing - either from CLOB or reasonable defaults
-                    pricing_added = await self._add_pricing_to_market(market, clob_markets)
-                    
-                    if pricing_added:
-                        markets_with_pricing.append(market)
-                        processed_count += 1
+                    if market and market.has_pricing:
+                        # Check if market is still open
+                        is_open = True
+                        if market.end_date:
+                            try:
+                                if 'T' in market.end_date:
+                                    end_date = datetime.fromisoformat(market.end_date.replace('Z', '+00:00'))
+                                else:
+                                    end_date = datetime.strptime(market.end_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                                
+                                if end_date <= now:
+                                    is_open = False
+                            except:
+                                # Can't parse date, assume closed
+                                is_open = False
                         
-                        # Log progress
-                        if processed_count % 500 == 0:
-                            logger.info(f"📊 Processed {processed_count} markets with pricing...")
-                        
-                        # Log first few for debugging
-                        if processed_count <= 3:
-                            logger.info(f"✅ Market {processed_count}: {market.question[:40]}... | YES: ${market.yes_token.price:.3f} | NO: ${market.no_token.price:.3f}")
+                        if is_open:
+                            markets_with_pricing.append(market)
+                            
+                            # Log first few for debugging
+                            if len(markets_with_pricing) <= 5:
+                                logger.info(f"✅ Open market {len(markets_with_pricing)}: {market.question[:60]}...")
+                                logger.info(f"   YES: ${market.yes_token.price:.3f} | NO: ${market.no_token.price:.3f} | Volume: ${market.volume:,.0f}")
                     
                 except Exception as e:
                     logger.debug(f"⚠️ Error processing market {i}: {e}")
                     continue
             
-            logger.info(f"🎯 Successfully processed {len(markets_with_pricing)} markets with pricing")
+            logger.info(f"🎉 Successfully found {len(markets_with_pricing)} OPEN markets with pricing")
             return markets_with_pricing
             
         except Exception as e:
@@ -223,13 +147,168 @@ class EnhancedPolymarketClient:
             traceback.print_exc()
             return []
     
+    async def _get_all_clob_markets(self, limit: int = 2000) -> List[Dict]:
+        """
+        Get ALL markets from CLOB API with proper pagination
+        """
+        all_markets = []
+        offset = 0
+        page_size = 100  # CLOB API typically returns 100 per page
+        
+        try:
+            while len(all_markets) < limit:
+                params = {
+                    'active': 'true',
+                    'closed': 'false',
+                    'limit': min(page_size, limit - len(all_markets)),
+                    'offset': offset
+                }
+                
+                logger.info(f"📄 Fetching page at offset {offset}...")
+                
+                async with self.session.get(f"{self.clob_url}/markets", params=params) as response:
+                    if response.status != 200:
+                        logger.warning(f"⚠️ CLOB API failed with status {response.status}")
+                        break
+                    
+                    clob_data = await response.json()
+                    
+                    # CLOB always returns {"data": [markets]}
+                    if isinstance(clob_data, dict) and 'data' in clob_data:
+                        markets = clob_data['data']
+                    else:
+                        logger.warning(f"⚠️ Unexpected CLOB response format")
+                        break
+                    
+                    if not markets:
+                        logger.info(f"📄 No more markets at offset {offset}, stopping pagination")
+                        break
+                    
+                    # Filter for active markets
+                    active_markets = [m for m in markets if m.get('active', False) and not m.get('closed', False)]
+                    all_markets.extend(active_markets)
+                    
+                    logger.info(f"📄 Got {len(active_markets)} active markets from page (total: {len(all_markets)})")
+                    
+                    # IMPORTANT: Don't break based on page size - the API might filter results
+                    # Only break if we get NO markets at all
+                    # Keep paginating until we hit our limit or get empty results
+                    
+                    # Move to next page
+                    offset += page_size
+                    
+                    # Add small delay to avoid rate limiting
+                    await asyncio.sleep(0.1)
+            
+            logger.info(f"🎉 Total markets fetched from CLOB: {len(all_markets)}")
+            return all_markets
+            
+        except Exception as e:
+            logger.error(f"❌ Error in _get_all_clob_markets: {e}")
+            import traceback
+            traceback.print_exc()
+            return all_markets  # Return what we got so far
+    
+    async def _clob_market_to_polymarket(self, clob_market: Dict) -> Optional[PolymarketMarket]:
+        """
+        Convert CLOB market data to PolymarketMarket object with pricing
+        """
+        try:
+            # Extract basic market info
+            condition_id = clob_market.get('condition_id', '')
+            if not condition_id:
+                return None
+            
+            # Extract tokens
+            tokens = clob_market.get('tokens', [])
+            if len(tokens) != 2:
+                return None
+            
+            # Find YES and NO tokens
+            yes_token_data = None
+            no_token_data = None
+            
+            for token in tokens:
+                outcome = token.get('outcome', '').lower()
+                if 'yes' in outcome:
+                    yes_token_data = token
+                elif 'no' in outcome:
+                    no_token_data = token
+            
+            if not yes_token_data or not no_token_data:
+                return None
+            
+            # Create market object
+            market = PolymarketMarket(
+                condition_id=condition_id,
+                question=clob_market.get('question', ''),
+                description=clob_market.get('description', ''),
+                end_date=clob_market.get('end_date_iso', ''),
+                yes_token_id=yes_token_data.get('token_id', ''),
+                no_token_id=no_token_data.get('token_id', ''),
+                category=clob_market.get('category', 'Unknown'),
+                volume=float(clob_market.get('volume', 0))
+            )
+            
+            # Extract pricing from token data
+            yes_price = float(yes_token_data.get('price', 0.5))
+            no_price = float(no_token_data.get('price', 0.5))
+            
+            # Create token objects with pricing
+            market.yes_token = PolymarketToken(
+                token_id=yes_token_data.get('token_id', ''),
+                outcome="Yes",
+                price=yes_price,
+                bid=max(yes_price - 0.01, 0.01),
+                ask=min(yes_price + 0.01, 0.99),
+                bid_size=market.volume / 10,
+                ask_size=market.volume / 10,
+                volume_24h=market.volume
+            )
+            
+            market.no_token = PolymarketToken(
+                token_id=no_token_data.get('token_id', ''),
+                outcome="No",
+                price=no_price,
+                bid=max(no_price - 0.01, 0.01),
+                ask=min(no_price + 0.01, 0.99),
+                bid_size=market.volume / 10,
+                ask_size=market.volume / 10,
+                volume_24h=market.volume
+            )
+            
+            return market
+            
+        except Exception as e:
+            logger.debug(f"⚠️ Error converting CLOB market: {e}")
+            return None
+    
     async def _get_clob_markets(self) -> List[Dict]:
         """Get markets from CLOB API"""
         try:
-            async with self.session.get(f"{self.clob_url}/markets") as response:
+            # Add parameters to get only active, open markets
+            params = {
+                'active': 'true',
+                'closed': 'false',
+                'limit': 1000  # Get more markets
+            }
+            async with self.session.get(f"{self.clob_url}/markets", params=params) as response:
                 if response.status == 200:
                     clob_data = await response.json()
-                    return clob_data if isinstance(clob_data, list) else []
+                    # CLOB always returns {"data": [markets]}
+                    if isinstance(clob_data, dict) and 'data' in clob_data:
+                        markets = clob_data['data']
+                        # Filter for active markets (active=true and closed=false)
+                        active_markets = [m for m in markets if m.get('active', False) and not m.get('closed', False)]
+                        logger.info(f"📊 Got {len(active_markets)} active markets from CLOB (out of {len(markets)} total)")
+                        return active_markets
+                    else:
+                        logger.warning(f"⚠️ Unexpected CLOB response format: {type(clob_data)}")
+                        if isinstance(clob_data, list):
+                            logger.warning(f"⚠️ CLOB returned a list directly (unusual), processing anyway...")
+                            active_markets = [m for m in clob_data if m.get('active', False) and not m.get('closed', False)]
+                            return active_markets
+                        return []
                 else:
                     logger.warning(f"⚠️ CLOB API failed: {response.status}")
                     return []
@@ -307,39 +386,52 @@ class EnhancedPolymarketClient:
             if not (yes_token_data and no_token_data):
                 return False
             
-            # Try to get live pricing for each token
-            yes_pricing = await self._get_token_pricing(yes_token_data.get('token_id', ''))
-            no_pricing = await self._get_token_pricing(no_token_data.get('token_id', ''))
+            # Extract prices directly from token data (CLOB includes prices)
+            yes_price = float(yes_token_data.get('price', 0.5))
+            no_price = float(no_token_data.get('price', 0.5))
             
-            if yes_pricing and no_pricing:
-                market.yes_token = PolymarketToken(
-                    token_id=yes_token_data.get('token_id', ''),
-                    outcome=yes_token_data.get('outcome', 'Yes'),
-                    price=yes_pricing.get('price', 0.5),
-                    bid=yes_pricing.get('bid', 0.49),
-                    ask=yes_pricing.get('ask', 0.51),
-                    bid_size=yes_pricing.get('bid_size', 100),
-                    ask_size=yes_pricing.get('ask_size', 100),
-                    volume_24h=yes_pricing.get('volume', 0)
-                )
+            # Only accept if prices look real (not default values)
+            default_prices = [0.52, 0.48, 0.55, 0.45, 0.50, 0.0]
+            if yes_price in default_prices and no_price in default_prices:
+                # Try to get live pricing as fallback
+                yes_pricing = await self._get_token_pricing(yes_token_data.get('token_id', ''))
+                no_pricing = await self._get_token_pricing(no_token_data.get('token_id', ''))
                 
-                market.no_token = PolymarketToken(
-                    token_id=no_token_data.get('token_id', ''),
-                    outcome=no_token_data.get('outcome', 'No'),
-                    price=no_pricing.get('price', 0.5),
-                    bid=no_pricing.get('bid', 0.49),
-                    ask=no_pricing.get('ask', 0.51),
-                    bid_size=no_pricing.get('bid_size', 100),
-                    ask_size=no_pricing.get('ask_size', 100),
-                    volume_24h=no_pricing.get('volume', 0)
-                )
-                
-                market.yes_token_id = yes_token_data.get('token_id', '')
-                market.no_token_id = no_token_data.get('token_id', '')
-                
-                return True
+                if yes_pricing and no_pricing:
+                    yes_price = yes_pricing.get('price', yes_price)
+                    no_price = no_pricing.get('price', no_price)
             
-            return False
+            # Create token objects with the prices we have
+            market.yes_token = PolymarketToken(
+                token_id=yes_token_data.get('token_id', ''),
+                outcome=yes_token_data.get('outcome', 'Yes'),
+                price=yes_price,
+                bid=max(yes_price - 0.01, 0.01),
+                ask=min(yes_price + 0.01, 0.99),
+                bid_size=1000,  # Default size
+                ask_size=1000,
+                volume_24h=float(clob_market.get('volume', 0))
+            )
+            
+            market.no_token = PolymarketToken(
+                token_id=no_token_data.get('token_id', ''),
+                outcome=no_token_data.get('outcome', 'No'),
+                price=no_price,
+                bid=max(no_price - 0.01, 0.01),
+                ask=min(no_price + 0.01, 0.99),
+                bid_size=1000,  # Default size
+                ask_size=1000,
+                volume_24h=float(clob_market.get('volume', 0))
+            )
+            
+            market.yes_token_id = yes_token_data.get('token_id', '')
+            market.no_token_id = no_token_data.get('token_id', '')
+            
+            # Update volume from CLOB data if available
+            if 'volume' in clob_market:
+                market.volume = float(clob_market['volume'])
+            
+            return True
             
         except Exception as e:
             logger.debug(f"⚠️ Error extracting CLOB pricing: {e}")
@@ -509,10 +601,200 @@ class EnhancedPolymarketClient:
         """Estimate gas cost"""
         return 2.0
     
+    async def _get_gamma_markets_page(self, offset: int = 0, limit: int = 100) -> Tuple[List[Dict], int]:
+        """Get a page of markets from gamma API"""
+        try:
+            params = {
+                'limit': limit,
+                'offset': offset,
+                'order': 'volume24hr',  # Order by volume for better results
+                'ascending': 'false'
+            }
+            
+            async with self.session.get(f"{self.gamma_url}/markets", params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if isinstance(data, list):
+                        # Gamma API returns list directly
+                        return data, len(data)
+                    elif isinstance(data, dict):
+                        # Sometimes it might be wrapped
+                        markets = data.get('markets', data.get('data', []))
+                        total = data.get('total', len(markets))
+                        return markets, total
+                return [], 0
+        except Exception as e:
+            logger.error(f"Error fetching gamma markets: {e}")
+            return [], 0
+    
+    async def _get_all_gamma_markets(self, limit: int = 2000) -> List[Dict]:
+        """Get ALL markets from gamma API with proper pagination"""
+        all_markets = []
+        offset = 0
+        page_size = 100
+        
+        try:
+            while len(all_markets) < limit:
+                logger.info(f"📄 Fetching gamma API page at offset {offset}...")
+                
+                markets, total = await self._get_gamma_markets_page(offset, page_size)
+                
+                if not markets:
+                    logger.info(f"📄 No more markets at offset {offset}")
+                    break
+                
+                # Filter for active markets - Note: 'active' field exists but 'closed' may not be reliable
+                # Check multiple conditions to determine if market is truly active
+                active_markets = []
+                for m in markets:
+                    # Multiple ways to check if market is active:
+                    # 1. Has an endDate in the future
+                    # 2. Has recent volume
+                    # 3. Not explicitly marked as resolved
+                    
+                    # Default to including market unless we find reason not to
+                    is_active = True
+                    
+                    # Check if resolved
+                    if m.get('resolved', False) or m.get('finalized', False):
+                        is_active = False
+                    
+                    # Check end date if available
+                    end_date_str = m.get('endDate') or m.get('end_date_iso', '')
+                    if end_date_str:
+                        try:
+                            from datetime import datetime, timezone
+                            if 'T' in end_date_str:
+                                end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                            else:
+                                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                            
+                            if end_date < datetime.now(timezone.utc):
+                                is_active = False
+                        except:
+                            pass
+                    
+                    if is_active:
+                        active_markets.append(m)
+                
+                all_markets.extend(active_markets)
+                logger.info(f"📄 Got {len(active_markets)} active markets (total: {len(all_markets)})")
+                
+                # Only stop if we get no markets at all
+                # Don't rely on total count or page size - API might filter results
+                
+                offset += page_size
+                await asyncio.sleep(0.1)  # Rate limiting
+            
+            logger.info(f"🎉 Total markets from gamma API: {len(all_markets)}")
+            return all_markets
+            
+        except Exception as e:
+            logger.error(f"❌ Error in _get_all_gamma_markets: {e}")
+            return all_markets
+    
+    def _gamma_market_to_polymarket(self, gamma_market: Dict) -> Optional[PolymarketMarket]:
+        """
+        Convert gamma API market data to PolymarketMarket object - FIXED for real Gamma API format
+        """
+        try:
+            # Use correct field name from Gamma API
+            condition_id = gamma_market.get('conditionId', '')  # Note: camelCase
+            if not condition_id:
+                return None
+            
+            # Skip resolved/closed markets
+            if gamma_market.get('closed', False) or gamma_market.get('umaResolutionStatus') == 'resolved':
+                return None
+            
+            # Parse JSON strings from Gamma API
+            try:
+                outcomes_str = gamma_market.get('outcomes', '[]')
+                outcomes = json.loads(outcomes_str) if isinstance(outcomes_str, str) else outcomes_str
+                
+                prices_str = gamma_market.get('outcomePrices', '[]')
+                outcome_prices = json.loads(prices_str) if isinstance(prices_str, str) else prices_str
+                
+                token_ids_str = gamma_market.get('clobTokenIds', '[]')
+                clob_token_ids = json.loads(token_ids_str) if isinstance(token_ids_str, str) else token_ids_str
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.debug(f"⚠️ JSON parsing error: {e}")
+                return None
+            
+            # Need at least 2 outcomes and prices
+            if len(outcomes) < 2 or len(outcome_prices) < 2:
+                return None
+            
+            # Extract token IDs
+            yes_token_id = clob_token_ids[0] if len(clob_token_ids) >= 1 else ''
+            no_token_id = clob_token_ids[1] if len(clob_token_ids) >= 2 else ''
+            
+            # Extract pricing - convert string prices to float
+            try:
+                yes_price = float(outcome_prices[0])
+                no_price = float(outcome_prices[1])
+                
+                # Skip if prices are 0/1 (resolved) or invalid
+                if (yes_price == 0.0 and no_price == 1.0) or (yes_price == 1.0 and no_price == 0.0):
+                    return None
+                    
+                # Ensure prices are reasonable (between 0.01 and 0.99)
+                if yes_price <= 0.01 or yes_price >= 0.99 or no_price <= 0.01 or no_price >= 0.99:
+                    # Use fallback pricing
+                    yes_price = 0.5
+                    no_price = 0.5
+                    
+            except (ValueError, TypeError):
+                # Fallback pricing
+                yes_price = 0.5
+                no_price = 0.5
+            
+            # Create market object
+            market = PolymarketMarket(
+                condition_id=condition_id,
+                question=gamma_market.get('question', ''),
+                description=gamma_market.get('description', ''),
+                end_date=gamma_market.get('endDate', ''),  # Use endDate, not end_date_iso
+                yes_token_id=yes_token_id,
+                no_token_id=no_token_id,
+                category='Sports',  # Most Gamma markets seem to be sports
+                volume=float(gamma_market.get('volume', 0) or gamma_market.get('volume24hr', 0))
+            )
+            
+            # Create token objects with pricing
+            market.yes_token = PolymarketToken(
+                token_id=yes_token_id,
+                outcome="Yes",
+                price=yes_price,
+                bid=max(yes_price - 0.01, 0.01),
+                ask=min(yes_price + 0.01, 0.99),
+                bid_size=market.volume / 10,
+                ask_size=market.volume / 10,
+                volume_24h=market.volume
+            )
+            
+            market.no_token = PolymarketToken(
+                token_id=no_token_id,
+                outcome="No",
+                price=no_price,
+                bid=max(no_price - 0.01, 0.01),
+                ask=min(no_price + 0.01, 0.99),
+                bid_size=market.volume / 10,
+                ask_size=market.volume / 10,
+                volume_24h=market.volume
+            )
+            
+            return market
+            
+        except Exception as e:
+            logger.debug(f"⚠️ Error converting gamma market: {e}")
+            return None
+    
     async def get_markets_by_criteria(self, min_volume_usd: float = 0, max_days_to_expiry: int = None,
                                     limit: int = 2000) -> List[PolymarketMarket]:
         """
-        Get Polymarket markets filtered by criteria using API parameters
+        Get Polymarket markets filtered by criteria using ONLY Gamma API
+        (CLOB filters are broken)
         
         Args:
             min_volume_usd: Minimum 24h volume in USD
@@ -520,155 +802,120 @@ class EnhancedPolymarketClient:
             limit: Maximum markets to fetch
         """
         try:
-            # Calculate date range if max_days_to_expiry is specified
-            params = {
-                'active': 'true',
-                'closed': 'false',
-                'limit': limit
-            }
+            logger.info(f"🔍 Fetching Polymarket markets with criteria: min_volume=${min_volume_usd}, max_days={max_days_to_expiry}")
             
-            if max_days_to_expiry is not None:
-                now = datetime.now(timezone.utc)
-                end_date_max = now + timedelta(days=max_days_to_expiry)
-                # Format: YYYY-MM-DD
-                params['end_date_min'] = now.strftime('%Y-%m-%d')
-                params['end_date_max'] = end_date_max.strftime('%Y-%m-%d')
-            
-            logger.info(f"🔍 Fetching Polymarket markets with filters: {params}")
-            
-            # Use CLOB API for better filtering
-            url = f"{self.clob_url}/markets"
-            
-            async with self.session.get(url, params=params) as response:
-                if response.status != 200:
-                    logger.warning(f"⚠️ CLOB API failed: {response.status}")
-                    # Fall back to gamma API
-                    return await self._get_markets_gamma_fallback(min_volume_usd, max_days_to_expiry, limit)
-                
-                clob_markets = await response.json()
-                
-                if not isinstance(clob_markets, list):
-                    logger.warning("⚠️ Unexpected CLOB response format")
-                    return await self._get_markets_gamma_fallback(min_volume_usd, max_days_to_expiry, limit)
-                
-                logger.info(f"✅ Got {len(clob_markets)} markets from CLOB")
-                
-                # Process CLOB markets into our format
-                filtered_markets = []
-                
-                for clob_market in clob_markets:
-                    try:
-                        # Get volume for liquidity calculation
-                        volume = float(clob_market.get('volume', 0))
-                        
-                        # Extract tokens
-                        tokens = clob_market.get('tokens', [])
-                        if len(tokens) != 2:
-                            continue
-                        
-                        yes_token = None
-                        no_token = None
-                        
-                        for token in tokens:
-                            if 'yes' in token.get('outcome', '').lower():
-                                yes_token = token
-                            elif 'no' in token.get('outcome', '').lower():
-                                no_token = token
-                        
-                        if not yes_token or not no_token:
-                            continue
-                        
-                        # Create market object
-                        market = PolymarketMarket(
-                            condition_id=clob_market.get('condition_id', ''),
-                            question=clob_market.get('question', ''),
-                            description=clob_market.get('description', ''),
-                            end_date=clob_market.get('end_date_iso', ''),
-                            yes_token_id=yes_token.get('token_id', ''),
-                            no_token_id=no_token.get('token_id', ''),
-                            category=clob_market.get('category', 'Unknown'),
-                            volume=volume
-                        )
-                        
-                        # Add pricing from tokens
-                        market.yes_token = PolymarketToken(
-                            token_id=yes_token.get('token_id', ''),
-                            outcome="Yes",
-                            price=float(yes_token.get('price', 0.5)),
-                            bid=float(yes_token.get('price', 0.5)) - 0.01,
-                            ask=float(yes_token.get('price', 0.5)) + 0.01,
-                            bid_size=volume / 10,
-                            ask_size=volume / 10,
-                            volume_24h=volume
-                        )
-                        
-                        market.no_token = PolymarketToken(
-                            token_id=no_token.get('token_id', ''),
-                            outcome="No",
-                            price=float(no_token.get('price', 0.5)),
-                            bid=float(no_token.get('price', 0.5)) - 0.01,
-                            ask=float(no_token.get('price', 0.5)) + 0.01,
-                            bid_size=volume / 10,
-                            ask_size=volume / 10,
-                            volume_24h=volume
-                        )
-                        
-                        # Apply liquidity filter using calculated liquidity_usd
-                        if min_volume_usd > 0 and market.liquidity_usd < min_volume_usd:
-                            continue
-                        
-                        filtered_markets.append(market)
-                        
-                    except Exception as e:
-                        logger.debug(f"Error processing CLOB market: {e}")
-                        continue
-                
-                logger.info(f"✅ Processed {len(filtered_markets)} Polymarket markets matching criteria")
-                return filtered_markets
+            # Use Gamma API directly - CLOB filters don't work
+            return await self._get_markets_gamma_filtered(min_volume_usd, max_days_to_expiry, limit)
                 
         except Exception as e:
             logger.error(f"❌ Error in get_markets_by_criteria: {e}")
-            return await self._get_markets_gamma_fallback(min_volume_usd, max_days_to_expiry, limit)
+            return []
     
-    async def _get_markets_gamma_fallback(self, min_volume_usd: float, max_days_to_expiry: int, limit: int) -> List[PolymarketMarket]:
-        """Fallback to original method if CLOB filtering fails"""
-        logger.info("📡 Using gamma API fallback...")
-        # Ensure we get ALL markets by using a high limit
-        fetch_limit = max(limit, 2000)  # Get at least 2000 markets
-        all_markets = await self.get_active_markets_with_pricing(limit=fetch_limit)
+    async def _get_markets_gamma_filtered(self, min_volume_usd: float, max_days_to_expiry: int, limit: int) -> List[PolymarketMarket]:
+        """Get markets from gamma API with filtering - FIXED date parsing"""
+        logger.info(f"📡 Getting markets from gamma API with filters: volume>=${min_volume_usd}, days<={max_days_to_expiry}")
         
-        logger.info(f"✅ Got {len(all_markets)} total markets to filter")
+        # Get markets from gamma API
+        gamma_markets = await self._get_all_gamma_markets(limit)
+        logger.info(f"✅ Got {len(gamma_markets)} raw markets from gamma API")
+        
+        # Convert to PolymarketMarket objects
+        all_markets = []
+        for gamma_market in gamma_markets:
+            try:
+                market = self._gamma_market_to_polymarket(gamma_market)
+                if market and market.has_pricing:
+                    all_markets.append(market)
+            except Exception as e:
+                logger.debug(f"⚠️ Error converting market: {e}")
+                continue
+        
+        logger.info(f"✅ Got {len(all_markets)} valid markets with pricing")
         
         # Apply filters locally
         filtered_markets = []
-        now = datetime.now(timezone.utc) if max_days_to_expiry else None
+        now = datetime.now(timezone.utc)
+        volume_filtered = 0
+        date_filtered = 0
+        date_parse_errors = 0
         
         for market in all_markets:
-            # Liquidity filter (using calculated liquidity_usd property)
+            # Volume/liquidity filter
             if min_volume_usd > 0 and market.liquidity_usd < min_volume_usd:
+                volume_filtered += 1
                 continue
             
             # Days to expiry filter
-            if max_days_to_expiry is not None and market.end_date:
+            if max_days_to_expiry is not None:
+                if not market.end_date:
+                    date_parse_errors += 1
+                    continue
+                
                 try:
-                    if 'T' in market.end_date:
+                    # Handle multiple date formats from Polymarket
+                    end_date = None
+                    if 'T' in market.end_date and 'Z' in market.end_date:
+                        # ISO format: "2025-08-15T23:05:00Z"
                         end_date = datetime.fromisoformat(market.end_date.replace('Z', '+00:00'))
+                    elif 'T' in market.end_date:
+                        # ISO format without Z: "2025-08-15T23:05:00"
+                        end_date = datetime.fromisoformat(market.end_date).replace(tzinfo=timezone.utc)
                     else:
+                        # Date only format: "2025-08-15"
                         end_date = datetime.strptime(market.end_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
                     
-                    days_to_expiry = (end_date - now).total_seconds() / 86400
-                    
-                    if days_to_expiry > max_days_to_expiry or days_to_expiry < 0:
+                    if end_date:
+                        days_to_expiry = (end_date - now).total_seconds() / 86400
+                        
+                        # Filter: must be positive (future) and within max_days
+                        if days_to_expiry <= 0 or days_to_expiry > max_days_to_expiry:
+                            date_filtered += 1
+                            continue
+                        
+                        # Store calculated days for later use
+                        market.days_to_expiry = days_to_expiry
+                    else:
+                        date_parse_errors += 1
                         continue
-                    
-                    market.days_to_expiry = days_to_expiry
-                except:
+                        
+                except Exception as e:
+                    logger.debug(f"⚠️ Date parsing error for '{market.end_date}': {e}")
+                    date_parse_errors += 1
                     continue
             
             filtered_markets.append(market)
         
-        logger.info(f"✅ {len(filtered_markets)} markets passed filters")
+        # Enhanced logging
+        logger.info(f"🎯 Filter Results:")
+        logger.info(f"   📊 Input markets: {len(all_markets)}")
+        logger.info(f"   💰 Volume filtered: {volume_filtered} (< ${min_volume_usd})")
+        logger.info(f"   📅 Date filtered: {date_filtered} (> {max_days_to_expiry} days or expired)")
+        logger.info(f"   ❌ Date parse errors: {date_parse_errors}")
+        logger.info(f"   ✅ Final result: {len(filtered_markets)} markets")
+        
         return filtered_markets
+    
+    async def get_market_by_condition_id(self, condition_id: str) -> Optional[PolymarketMarket]:
+        """Get a specific market by condition ID"""
+        try:
+            # Get all markets and find the one with matching condition_id
+            markets = await self.get_markets_by_criteria(limit=100)
+            
+            for market in markets:
+                if market.condition_id == condition_id:
+                    return market
+            
+            # If not found in initial batch, search more broadly
+            all_markets = await self.get_active_markets_with_pricing(limit=500)
+            for market in all_markets:
+                if market.condition_id == condition_id:
+                    return market
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting market by condition ID {condition_id}: {e}")
+            return None
     
     async def calculate_trade_costs(self, token_id: str, volume_usd: float, side: str) -> Dict:
         """

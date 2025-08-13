@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Enhanced OpenAI (GPT-4o-mini) Contract Matching System
+Enhanced OpenAI (GPT-4.1-mini) Contract Matching System
 Handles individual contract matching with specific thresholds
-Using GPT-4o-mini for best cost effectiveness and performance
+Using GPT-4.1-mini for best cost effectiveness and performance
 """
 
 import os
@@ -14,6 +14,10 @@ from typing import List, Dict, Optional, Tuple, Set
 import csv
 from dataclasses import dataclass, asdict
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add paths
 sys.path.append('./data_collectors')
@@ -47,16 +51,16 @@ class ContractMatch:
             self.kalshi_ticker,
             self.kalshi_question,
             self.polymarket_condition_id,
-            self.polymarket_question,
+            self.polymarket_question,  # This was missing!
             self.confidence,
             self.match_type,
             self.notes,
-            'YES' if self.confidence > 0.8 else 'NO',
-            'SAFE_FOR_AUTOMATION' if self.confidence > 0.9 else 'NEEDS_REVIEW'
+            'YES' if self.confidence >= 0.85 else 'NO',
+            'SAFE_FOR_AUTOMATION' if self.confidence >= 0.95 else 'NEEDS_REVIEW'
         ]
 
 class EnhancedOpenAIMatchingSystem:
-    """Enhanced system that matches individual contracts using OpenAI GPT-3.5-turbo"""
+    """Enhanced system that matches individual contracts using OpenAI GPT-4.1-mini"""
     
     def __init__(self):
         self.api_key = os.getenv('OPENAI_API_KEY')
@@ -68,25 +72,45 @@ class EnhancedOpenAIMatchingSystem:
         self.cache_file = "data/enhanced_match_cache.json"
         self.cache = self._load_cache()
         
-        # Enhanced matching prompt
-        self.matching_prompt = """You are an expert at matching prediction market contracts between Kalshi and Polymarket.
+        # SMART & STRICT matching prompt
+        self.matching_prompt = """You are a STRICT prediction market matching expert who understands that the SAME EVENT can be phrased differently.
 
-CRITICAL RULES:
-1. Match INDIVIDUAL contracts, not just event groups
-2. For events with multiple thresholds (like Fed rates: 0%, 0.25%, 0.5%), match each specific threshold
-3. Pay attention to exact numerical values - "above 3.0%" must match "above 3.0%", NOT "above 3.5%"
-4. Consider date alignment - contracts should expire around the same time
-5. Binary outcomes must be equivalent (YES on one side = NO on the other is OK)
+🔴 DEFAULT: REJECT unless you're certain it's the SAME real-world event.
 
-For each match, provide:
-- kalshi_ticker: The specific Kalshi contract ticker
-- polymarket_condition_id: The specific Polymarket condition ID
-- confidence: 0.0-1.0 (use 0.9+ for exact matches, 0.7-0.9 for very similar)
-- match_type: 'exact', 'threshold', 'similar', or 'fuzzy'
-- threshold_value: The specific threshold if applicable (e.g., 3.0 for "above 3.0%")
-- notes: Brief explanation of the match
+KEY PRINCIPLE: Same event, different wording is OK. Different events are NOT OK.
 
-Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No additional text."""
+GOOD MATCHES (same event, different phrasing):
+✅ "Best AI this month?" = "Which company has best AI model end of August?" (same: which AI is best in August)
+✅ "Will Person X visit Country Y before Date?" = "Person X enters Country Y by Date?" (same: person visiting country)
+✅ "Fed raises rates 0.25%?" = "Federal Reserve increases interest rates by 25 basis points?" (same: Fed rate change)
+✅ "Bitcoin above $100k on Dec 31?" = "Will BTC exceed 100,000 USD by year end?" (same: Bitcoin price threshold)
+
+BAD MATCHES (different events, even if related):
+❌ "Best AI company?" ≠ "Google largest market cap?" (different: AI performance vs company valuation)
+❌ "Gas prices above $3?" ≠ "Egg prices below $3?" (different: gas vs eggs)
+❌ "India tariff rate?" ≠ "China tariff rate?" (different: India vs China)
+❌ "What will Trump say?" ≠ "Will Trump sell Gold Cards?" (different: speaking vs selling)
+❌ "Any Democrat arrested?" ≠ "Specific person arrested?" (different: group vs individual)
+
+MATCHING RULES:
+1. SAME CORE EVENT - not just related topics
+2. SAME OUTCOME TYPE - both binary, both numeric, both multiple choice
+3. SAME TIMEFRAME - within 48 hours
+4. SAME THRESHOLD - if numeric, must be identical
+
+FOR EACH MATCH:
+- Explain WHY it's the same event despite different wording
+- Confidence 0.9+ only for identical events
+- Return empty array [] if no real matches
+
+Return ONLY a JSON array with these fields:
+- kalshi_ticker
+- polymarket_condition_id
+- kalshi_question
+- polymarket_question
+- confidence (0.9+ for matches)
+- match_type: 'exact'
+- notes: Brief explanation of why it's the SAME event"""
     
     def _load_cache(self) -> Dict:
         """Load match cache"""
@@ -100,6 +124,10 @@ Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No a
     
     def _save_cache(self):
         """Save match cache"""
+        # Ensure cache has the matches key
+        if 'matches' not in self.cache:
+            self.cache['matches'] = {}
+        
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         self.cache["last_updated"] = datetime.now().isoformat()
         with open(self.cache_file, 'w') as f:
@@ -112,7 +140,7 @@ Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No a
         # Kalshi markets with filtering
         kalshi_markets = self.kalshi_client.get_markets_by_criteria(
             min_liquidity_usd=500,
-            max_days_to_expiry=14,
+            max_days_to_expiry=30,  # Extended to 30 days
             min_volume=50,
             status_filter=['active', 'open']
         )
@@ -121,7 +149,7 @@ Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No a
         async with EnhancedPolymarketClient() as poly_client:
             poly_markets = await poly_client.get_markets_by_criteria(
                 min_volume_usd=500,
-                max_days_to_expiry=14,
+                max_days_to_expiry=30,  # Extended to 30 days
                 limit=3000
             )
             # Convert to dict format
@@ -134,8 +162,8 @@ Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No a
                     'yes_price': market.yes_token.price if market.yes_token else 0,
                     'no_price': market.no_token.price if market.no_token else 0,
                     'volume_24h': market.volume_24h,
-                    'liquidity': market.liquidity,
-                    'end_date': market.end_date_iso,
+                    'liquidity': market.liquidity_usd,
+                    'end_date': market.end_date,
                     'tags': ','.join(market.tags) if hasattr(market, 'tags') else ''
                 }
                 poly_dicts.append(poly_dict)
@@ -203,13 +231,41 @@ Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No a
             
             openai.api_key = self.api_key
             
-            # Prepare market summaries
-            kalshi_summary = self._prepare_kalshi_summary(kalshi_batch)
+            # Check cache for already matched contracts
+            cached_matches = []
+            uncached_kalshi = []
+            
+            for kalshi_market in kalshi_batch:
+                ticker = kalshi_market.get('ticker', '')
+                cache_key = f"kalshi_{ticker}"
+                
+                if cache_key in self.cache.get('matches', {}):
+                    # Found in cache - recreate ContractMatch object
+                    cached_data = self.cache['matches'][cache_key]
+                    if cached_data and 'poly_condition_id' in cached_data:
+                        # Verify the Polymarket contract still exists
+                        poly_exists = any(p['condition_id'] == cached_data['poly_condition_id'] for p in poly_markets)
+                        if poly_exists:
+                            cached_matches.append(cached_data)
+                            logger.info(f"📦 Using cached match for {ticker}")
+                            continue
+                
+                uncached_kalshi.append(kalshi_market)
+            
+            # If all contracts are cached, return cached results
+            if not uncached_kalshi:
+                logger.info(f"✅ All {len(cached_matches)} contracts found in cache")
+                return self._convert_cached_to_matches(cached_matches, kalshi_batch, poly_markets)
+            
+            logger.info(f"📊 Found {len(cached_matches)} cached matches, querying OpenAI for {len(uncached_kalshi)} new contracts")
+            
+            # Prepare market summaries only for uncached contracts
+            kalshi_summary = self._prepare_kalshi_summary(uncached_kalshi)
             poly_summary = self._prepare_polymarket_summary(poly_markets)
             
             message = f"""{self.matching_prompt}
 
-## Kalshi Contracts ({len(kalshi_batch)} contracts)
+## Kalshi Contracts ({len(uncached_kalshi)} contracts)
 {kalshi_summary}
 
 ## Polymarket Contracts ({len(poly_markets)} contracts)
@@ -217,9 +273,9 @@ Return ONLY a JSON array of matches. Focus on HIGH CONFIDENCE matches only. No a
 
 Analyze these contracts and return matches as a JSON array. Remember to match INDIVIDUAL contracts with specific thresholds."""
 
-            # Call OpenAI API with GPT-4o-mini (most cost effective)
+            # Call OpenAI API with GPT-4.1-mini (most cost effective)
             response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",  # Using GPT-4o-mini for best cost/performance ratio
+                model="gpt-4.1-mini",  # Using GPT-4.1-mini for best cost/performance ratio
                 messages=[
                     {"role": "system", "content": "You are a prediction market contract matching expert. Always return valid JSON arrays only."},
                     {"role": "user", "content": message}
@@ -231,8 +287,29 @@ Analyze these contracts and return matches as a JSON array. Remember to match IN
             
             # Parse response
             response_text = response.choices[0].message.content
-            matches = self._parse_openai_response(response_text, kalshi_batch, poly_markets)
-            return matches
+            new_matches = self._parse_openai_response(response_text, uncached_kalshi, poly_markets)
+            
+            # Save new matches to cache
+            for match in new_matches:
+                cache_key = f"kalshi_{match.kalshi_ticker}"
+                self.cache['matches'][cache_key] = {
+                    'kalshi_ticker': match.kalshi_ticker,
+                    'kalshi_question': match.kalshi_question,
+                    'poly_condition_id': match.polymarket_condition_id,
+                    'poly_question': match.polymarket_question,
+                    'confidence': match.confidence,
+                    'match_type': match.match_type,
+                    'threshold_value': match.threshold_value,
+                    'notes': match.notes,
+                    'matched_at': match.matched_at
+                }
+            self._save_cache()
+            
+            # Merge cached and new matches
+            all_matches = self._convert_cached_to_matches(cached_matches, kalshi_batch, poly_markets) + new_matches
+            logger.info(f"📊 Total matches: {len(all_matches)} ({len(cached_matches)} cached + {len(new_matches)} new)")
+            
+            return all_matches
             
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
@@ -260,7 +337,7 @@ Analyze these contracts and return matches as a JSON array. Remember to match IN
         """Prepare Polymarket summary for OpenAI"""
         lines = []
         for market in markets[:200]:  # Limit to avoid token limits
-            cond_id = market.get('condition_id', '')[:16]
+            cond_id = market.get('condition_id', '')
             question = market.get('question', '')
             end_date = market.get('end_date', '')[:10]  # Date only
             
@@ -268,7 +345,8 @@ Analyze these contracts and return matches as a JSON array. Remember to match IN
             threshold = self.extract_threshold_value(question)
             threshold_str = f" [Threshold: {threshold}]" if threshold else ""
             
-            lines.append(f"{cond_id}...: {question}{threshold_str} - Expires: {end_date}")
+            # Include full condition ID for matching
+            lines.append(f"{cond_id}: {question}{threshold_str} - Expires: {end_date}")
         
         if len(markets) > 200:
             lines.append(f"... and {len(markets) - 200} more markets")
@@ -305,7 +383,20 @@ Analyze these contracts and return matches as a JSON array. Remember to match IN
                     
                     # Get full market data
                     kalshi_market = kalshi_lookup.get(kalshi_ticker, {})
-                    poly_market = poly_lookup.get(poly_cond_id, {})
+                    
+                    # Try to find polymarket by full or partial condition_id
+                    poly_market = poly_lookup.get(poly_cond_id)
+                    if not poly_market and len(poly_cond_id) < 40:  # Might be truncated
+                        # Try to find by prefix
+                        for full_id, market in poly_lookup.items():
+                            if full_id.startswith(poly_cond_id):
+                                poly_market = market
+                                poly_cond_id = full_id  # Use full ID
+                                break
+                    
+                    if not poly_market:
+                        logger.warning(f"Could not find Polymarket market for condition_id: {poly_cond_id}")
+                        continue
                     
                     # Check expiry alignment
                     expiry_aligned = self._check_expiry_alignment(
@@ -351,6 +442,50 @@ Analyze these contracts and return matches as a JSON array. Remember to match IN
             return diff < 48 * 3600  # Within 48 hours
         except:
             return False
+    
+    def _convert_cached_to_matches(self, cached_data: List[Dict], 
+                                 kalshi_markets: List[Dict], 
+                                 poly_markets: List[Dict]) -> List[ContractMatch]:
+        """Convert cached data back to ContractMatch objects"""
+        matches = []
+        
+        # Create lookup dictionaries
+        kalshi_lookup = {m['ticker']: m for m in kalshi_markets}
+        poly_lookup = {m['condition_id']: m for m in poly_markets}
+        
+        for cache_entry in cached_data:
+            try:
+                kalshi_ticker = cache_entry['kalshi_ticker']
+                poly_cond_id = cache_entry['poly_condition_id']
+                
+                # Get current market data
+                kalshi_market = kalshi_lookup.get(kalshi_ticker, {})
+                poly_market = poly_lookup.get(poly_cond_id, {})
+                
+                # Check expiry alignment with current data
+                expiry_aligned = self._check_expiry_alignment(
+                    kalshi_market.get('close_time', ''),
+                    poly_market.get('end_date', '')
+                )
+                
+                match = ContractMatch(
+                    kalshi_ticker=kalshi_ticker,
+                    kalshi_question=cache_entry.get('kalshi_question', kalshi_market.get('question', kalshi_market.get('title', ''))),
+                    kalshi_event_ticker=kalshi_market.get('event_ticker', ''),
+                    polymarket_condition_id=poly_cond_id,
+                    polymarket_question=cache_entry.get('poly_question', poly_market.get('question', '')),
+                    confidence=cache_entry.get('confidence', 0.0),
+                    match_type=cache_entry.get('match_type', 'cached'),
+                    threshold_value=cache_entry.get('threshold_value'),
+                    notes=cache_entry.get('notes', 'Loaded from cache'),
+                    matched_at=cache_entry.get('matched_at', datetime.now().isoformat()),
+                    expiry_alignment=expiry_aligned
+                )
+                matches.append(match)
+            except Exception as e:
+                logger.warning(f"Failed to convert cached entry: {e}")
+        
+        return matches
     
     async def run_enhanced_matching(self) -> Dict:
         """Run the enhanced matching process"""

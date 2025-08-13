@@ -21,39 +21,38 @@ def main():
         sys.exit(1)
     
     print("\nSelect mode:")
-    print("1. Test Run - Alert Mode (Discord alerts)")
-    print("2. Test Run - Auto Mode (automatic execution)")
-    print("3. Live Monitor - Alert Mode (recommended)")
-    print("4. Live Monitor - Auto Mode (fully automated)")
-    print("5. View Documentation")
+    print("1. Test Run (single cycle)")
+    print("2. Live Monitor - Fully Automated (recommended)")
+    print("3. Check Verification Status")
+    print("4. View Documentation")
     
-    choice = input("\nEnter choice (1-5): ").strip()
+    choice = input("\nEnter choice (1-4): ").strip()
     
     if choice == '1':
-        print("\n🧪 Running test cycle with Discord alerts...")
-        subprocess.run([sys.executable, 'fully_automated_enhanced.py', 'test', '--mode', 'alert'])
+        print("\n🧪 Running single test cycle...")
+        subprocess.run([sys.executable, 'fully_automated_enhanced.py', 'test'])
     
     elif choice == '2':
-        print("\n🧪 Running test cycle with auto execution...")
-        subprocess.run([sys.executable, 'fully_automated_enhanced.py', 'test', '--mode', 'auto'])
+        print("\n🤖 Starting fully automated monitoring...")
+        print("✅ Auto-executes verified matches")
+        print("📱 Alerts only for new matches needing verification")
+        print("📊 Daily summaries at 6 PM EST")
+        interval = input("\nScan interval in minutes (default 15): ").strip() or '15'
+        days = input("Contract expiry window in days (default 14): ").strip() or '14'
+        subprocess.run([sys.executable, 'fully_automated_enhanced.py', 'monitor', '--interval', interval, '--days', days])
     
     elif choice == '3':
-        print("\n📱 Starting live monitoring with Discord alerts...")
-        print("💡 You'll receive alerts and can execute with 'EXECUTE A001' commands")
-        interval = input("Scan interval in minutes (default 15): ").strip() or '15'
-        subprocess.run([sys.executable, 'fully_automated_enhanced.py', 'monitor', '--mode', 'alert', '--interval', interval])
+        print("\n📊 Checking verification status...")
+        # Verification status - check matching files directly
+        print("📁 Checking for verified match files...")
+        if os.path.exists('manual_matches.csv'):
+            with open('manual_matches.csv', 'r') as f:
+                lines = f.readlines()
+                print(f"✅ Found {len(lines)-1} verified matches in manual_matches.csv")
+        else:
+            print("❌ No manual_matches.csv found")
     
     elif choice == '4':
-        print("\n🤖 Starting fully automated monitoring...")
-        print("⚠️  WARNING: This will auto-execute all profitable opportunities!")
-        confirm = input("Are you sure? (yes/no): ").strip().lower()
-        if confirm == 'yes':
-            interval = input("Scan interval in minutes (default 15): ").strip() or '15'
-            subprocess.run([sys.executable, 'fully_automated_enhanced.py', 'monitor', '--mode', 'auto', '--interval', interval])
-        else:
-            print("Cancelled.")
-    
-    elif choice == '5':
         print("\n📖 Opening documentation...")
         if os.path.exists('QUICK_START.md'):
             with open('QUICK_START.md', 'r') as f:

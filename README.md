@@ -49,25 +49,22 @@ arbitrage_bot/
 3. **Add Kalshi private key**:
    - Place your `kalshi-private-key.pem` in the `keys/` directory
 
-4. **Run setup**:
+4. **Test the system**:
    ```bash
-   python scripts/setup_openai.py
+   python run.py
    ```
 
 ## 🎯 Quick Start
 
+**Single Entry Point**: Use `run.py` for all operations
+
 ```bash
-# Interactive launcher
+# Interactive launcher (RECOMMENDED)
 python run.py
 
-# Test run with alerts
+# Direct access (advanced users):
 python fully_automated_enhanced.py test --mode alert
-
-# Live monitoring with Discord alerts
 python fully_automated_enhanced.py monitor --mode alert
-
-# Fully automated execution (use with caution)
-python fully_automated_enhanced.py monitor --mode auto
 ```
 
 ## 💡 How It Works

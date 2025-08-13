@@ -1,0 +1,80 @@
+HANDOVER PROMPT FOR CROSS-ASSET ARBITRAGE TESTING
+=================================================
+
+## CONTEXT
+I'm the PM working on a Python arbitrage bot that currently does pure prediction market arbitrage (Kalshi ↔ Polymarket). I manually discovered profitable arbitrage opportunities between Kalshi S&P prediction markets and SPY options (5-10% typical edge, much higher than the 0.01% in traditional arbitrage). Example: Kalshi NO on S&P 6350+ at 64% vs SPY 634/635 call spread at ~45% probability = 19% edge.
+
+## WHAT WAS JUST BUILT
+1. **IBKR Options Client** (`/Users/kaseharris/arbitrage_bot/src/data_collectors/ibkr_options_client.py`)
+   - Connects to IBKR TWS for real-time SPY options data
+   - Fetches option chains with Greeks (delta, gamma, theta, vega, IV)
+   - Calculates implied probabilities from options prices
+   - Finds SPY spreads equivalent to Kalshi S&P levels (S&P/10 = SPY)
+   - Calculates arbitrage opportunities with exact commission costs
+   - Tracks monthly volume for commission tier optimization
+
+2. **Test Script** (`/Users/kaseharris/arbitrage_bot/test_ibkr_options.py`)
+   - Tests all functionality needed for cross-asset arbitrage
+   - Simulates scenarios similar to my successful manual trade
+   - Shows cost breakdowns and profitability analysis
+
+## CURRENT STATUS
+- IBKR options client is complete and ready for testing
+- Uses existing bot infrastructure (60% code reuse)
+- Integrates with current Kalshi client and execution framework
+- Commission structure implemented (real costs: $2-3 per spread)
+
+## TO TEST THE SYSTEM
+1. Make sure IBKR TWS is running with API enabled:
+   - File → Global Configuration → API → Settings
+   - Enable ActiveX and Socket Clients
+   - Socket port: 7496 (live) or 7497 (paper)
+   - Add trusted IP: 127.0.0.1
+
+2. Activate the conda environment:
+   ```bash
+   cd /Users/kaseharris/arbitrage_bot
+   conda activate arbitrage_env
+   ```
+
+3. Run the test script:
+   ```bash
+   python test_ibkr_options.py
+   ```
+
+## EXPECTED TEST RESULTS
+The test will:
+- Connect to TWS and get current SPY price
+- Fetch SPY option chains for next expiry (Mon/Wed/Fri)
+- Find option spreads matching Kalshi S&P levels
+- Calculate arbitrage for 4 scenarios (including one like my 19% edge trade)
+- Show which scenarios are profitable after all costs
+- Display commission tier information
+
+## KEY STRATEGY POINTS
+- Target: 0DTE (same-day) SPY options for settlement alignment
+- Kalshi settles at 4PM ET on S&P close
+- SPY options trade until 4:15 PM ET
+- Must close options by 3:50 PM to avoid assignment risk
+- Need ~5% edge minimum to cover all costs (Kalshi fees + IBKR commissions)
+
+## NEXT STEPS AFTER TESTING
+1. Verify option data quality and Greeks accuracy
+2. Test with live Kalshi data for real arbitrage detection
+3. Implement automated position closing before 3:50 PM
+4. Add cross-asset matching logic to main detector
+5. Test paper trading before going live
+
+## KEY FILES REFERENCE
+- `/docs/Cross_Asset_Arbitrage_Implementation_Analysis.md` - Full strategy documentation
+- `/src/data_collectors/ibkr_options_client.py` - New options client
+- `/src/data_collectors/kalshi_client.py` - Existing Kalshi client (works perfectly)
+- `/src/detectors/detector.py` - Main arbitrage detector (needs cross-asset enhancement)
+
+## IMPORTANT NOTES
+- Using IBKR Pro with tiered commissions (currently $0.65/contract, drops to $0.15 at 100k+/month)
+- Real commission costs are $2-3 per spread including all fees
+- Strategy requires $25-50k capital for meaningful profits
+- Expected profit: $500-1,500/day with proper execution
+
+Please test the IBKR options functionality and let me know the results. The test script should show whether we're successfully getting option data and finding profitable arbitrage opportunities.

@@ -236,7 +236,7 @@ class CSVBasedArbitrageDetector:
             profit_percentage = (net_profit_per_contract / combined_cost) * 100
             
             # Calculate time to expiry
-            time_to_expiry = self.calculate_time_to_expiry(pair['kalshi_expiry'])
+            time_to_expiry = self.calculate_time_to_expiry(pair)
             if time_to_expiry <= 0:
                 return None  # Already expired
             
@@ -350,15 +350,28 @@ class CSVBasedArbitrageDetector:
         total_fee = volume * fee_per_contract
         return round(total_fee, 2)
     
-    def calculate_time_to_expiry(self, expiry_str: str) -> float:
-        """Calculate hours until expiry"""
+    def calculate_time_to_expiry(self, pair: Dict) -> float:
+        """Calculate hours until expiry from pair data"""
         try:
             # Parse expiry date and calculate hours remaining
             # This depends on the format in your CSV
-            expiry_date = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
-            now = datetime.now()
-            time_diff = expiry_date - now
-            return max(time_diff.total_seconds() / 3600, 0)  # Hours
+            # First check if we have an expiry field in the row
+            if 'kalshi_expiry' in pair:
+                expiry_str = pair['kalshi_expiry']
+            else:
+                # Try to get from market data if available
+                expiry_str = None
+                
+            if expiry_str:
+                try:
+                    expiry_date = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
+                    now = datetime.now()
+                    time_diff = expiry_date - now
+                    return max(time_diff.total_seconds() / 3600, 0)  # Hours
+                except Exception:
+                    pass
+                    
+            return 24.0  # Default to 24 hours if parsing fails
         except Exception:
             return 24.0  # Default to 24 hours if parsing fails
     

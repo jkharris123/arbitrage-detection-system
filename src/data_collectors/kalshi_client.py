@@ -617,6 +617,18 @@ class KalshiClient:
                 print(f"❌ Order placement failed")
             return None
     
+    def get_market(self, ticker: str) -> Optional[Dict]:
+        """Get market details by ticker"""
+        try:
+            response = self._make_authenticated_request("GET", f"/markets/{ticker}")
+            if response and 'market' in response:
+                return response['market']
+            return None
+        except Exception as e:
+            if self.verbose:
+                print(f"❌ Error fetching market {ticker}: {e}")
+            return None
+    
     def get_balance(self) -> Optional[float]:
         """Get account balance"""
         try:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Fully Automated Arbitrage System with Enhanced OpenAI Matching
-Complete pipeline: Fetch markets → OpenAI (GPT-4o-mini) individual contract matching → Arbitrage detection → Discord alerts/execution
+Complete pipeline: Fetch markets → OpenAI (GPT-4.1-mini) individual contract matching → Arbitrage detection → Discord alerts/execution
 """
 
 import asyncio
@@ -18,7 +18,7 @@ sys.path.append('./src/detectors')
 sys.path.append('./src/bots')
 sys.path.append('./src/matchers')
 
-from openai_enhanced_matcher import EnhancedOpenAIMatchingSystem as EnhancedClaudeMatchingSystem
+from openai_enhanced_matcher import EnhancedOpenAIMatchingSystem
 from claude_matched_detector import ClaudeMatchedArbitrageDetector
 from discord_bot import UnifiedBotManager
 
@@ -32,20 +32,21 @@ logger = logging.getLogger(__name__)
 class FullyAutomatedArbitrageSystem:
     """Complete automated arbitrage system with enhanced OpenAI matching"""
     
-    def __init__(self, mode: str = 'alert'):
+    def __init__(self, mode: str = 'alert', max_days_to_expiry: int = 14):
         """
         Initialize system
         
         Args:
             mode: 'alert' for Discord alerts only, 'auto' for full automation
+            max_days_to_expiry: Maximum days until contract expiry (rolling window)
         """
         self.mode = mode
-        self.matching_system = EnhancedClaudeMatchingSystem()
+        self.matching_system = EnhancedOpenAIMatchingSystem()
         self.discord_manager = UnifiedBotManager() if os.getenv('DISCORD_BOT_TOKEN') else None
         
         # Configuration
         self.min_profit = 10.0  # Minimum $10 profit to act on
-        self.max_days_to_expiry = 14
+        self.max_days_to_expiry = max_days_to_expiry  # Configurable rolling window
         self.min_confidence = 0.8  # Minimum match confidence
         
         # Live testing tracking
@@ -100,7 +101,7 @@ class FullyAutomatedArbitrageSystem:
         
         try:
             # Step 1: Run enhanced OpenAI matching for individual contracts
-            logger.info("\n📊 Step 1: Enhanced OpenAI (GPT-4o-mini) Matching")
+            logger.info("\n📊 Step 1: Enhanced OpenAI (GPT-4.1-mini) Matching")
             logger.info("🎯 Matching individual contracts with specific thresholds...")
             
             match_stats = await self.matching_system.run_enhanced_matching()
@@ -227,7 +228,7 @@ class FullyAutomatedArbitrageSystem:
         logger.info(f"⏰ Scanning every {interval_minutes} minutes")
         logger.info(f"🎯 Mode: {self.mode.upper()}")
         logger.info(f"💰 Minimum profit threshold: ${self.min_profit}")
-        logger.info(f"🤖 Enhanced OpenAI (GPT-4o-mini) matching: ENABLED")
+        logger.info(f"🤖 Enhanced OpenAI (GPT-4.1-mini) matching: ENABLED")
         
         # Check for required API keys
         if not os.getenv('OPENAI_API_KEY'):
@@ -284,10 +285,12 @@ async def main():
                        help='Execution mode: alert (Discord alerts) or auto (automatic execution)')
     parser.add_argument('--interval', type=int, default=15,
                        help='Monitoring interval in minutes (default: 15)')
+    parser.add_argument('--days', type=int, default=14,
+                       help='Maximum days to expiry for contracts (rolling window, default: 14)')
     
     args = parser.parse_args()
     
-    system = FullyAutomatedArbitrageSystem(mode=args.mode)
+    system = FullyAutomatedArbitrageSystem(mode=args.mode, max_days_to_expiry=args.days)
     
     if args.command == 'test':
         print(f"🧪 Running single test cycle in {args.mode} mode...")
@@ -301,9 +304,9 @@ async def main():
 
 if __name__ == "__main__":
     # Example usage:
-    # python fully_automated_enhanced.py test --mode alert    # Test with Discord alerts
-    # python fully_automated_enhanced.py test --mode auto     # Test with auto execution
-    # python fully_automated_enhanced.py monitor --mode alert # Live with Discord alerts
-    # python fully_automated_enhanced.py monitor --mode auto  # Live with auto execution
+    # python fully_automated_enhanced.py test --mode alert --days 30    # Test with 30-day window
+    # python fully_automated_enhanced.py test --mode auto --days 7     # Test with 7-day window  
+    # python fully_automated_enhanced.py monitor --mode alert --days 14 # Live with 14-day window
+    # python fully_automated_enhanced.py monitor --mode auto --days 30  # Live with 30-day window
     
     asyncio.run(main())
